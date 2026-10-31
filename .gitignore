@@ -1,0 +1,18 @@
+# 本地编译工具链 太大 不进仓库
+tools/
+
+# 编译出来的东西 走 Release 附件
+dist/
+
+# 编译中间产物
+*.o
+*.res
+*.obj
+*.pdb
+*.ilk
+
+# 编辑器
+.vs/
+.vscode/
+.idea/
+*.user
