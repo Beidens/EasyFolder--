@@ -148,6 +148,7 @@ static void TrayMenu()
         FolderData* d = g_folders[cmd - 1000];
         FolderShow(d);
         PanelSettingsOpen(d);
+        FolderCleanTopmost();
     }
 }
 
@@ -294,6 +295,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR args, int show)
     RegisterShell();
     BuildTray();
     ShowAll();
+    FolderCleanTopmost();
 
     if (create) DoCreate(name);
 

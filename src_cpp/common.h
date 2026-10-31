@@ -101,5 +101,6 @@ bool NameInput(HWND owner, const wstring& title, const wstring& initial, wstring
 void FolderShow(FolderData* d);
 void FolderDestroy(FolderData* d);
 void FolderReloadItems(FolderData* d);
+void FolderCleanTopmost();
 void AppCreateFolder();
 void PanelSettingsOpen(FolderData* d);

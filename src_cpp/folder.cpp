@@ -623,6 +623,7 @@ static void FolderMenu(FWin* w)
     {
         // 设置窗口是模态的 关掉之后把改了的东西重画一遍
         PanelSettingsOpen(w->d);
+        FolderCleanTopmost();
         Render(w);
     }
     else if (cmd == 3)
@@ -665,6 +666,14 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
 
     switch (m)
     {
+    case WM_WINDOWPOSCHANGING:
+    {
+        // 桌面图标是挂在普通窗口层次里的东西 谁想把它提到最上面就改回去
+        WINDOWPOS* p = (WINDOWPOS*)lp;
+        if (!(p->flags & SWP_NOZORDER) && p->hwndInsertAfter == HWND_TOPMOST)
+            p->hwndInsertAfter = HWND_NOTOPMOST;
+        break;
+    }
     case WM_CREATE:
     {
         CREATESTRUCTW* cs = (CREATESTRUCTW*)lp;
@@ -1013,4 +1022,19 @@ void FolderDestroy(FolderData* d)
 void FolderReloadItems(FolderData* d)
 {
     if (d->hwnd && IsWindow(d->hwnd)) PostMessageW(d->hwnd, WM_APP + 1, 0, 0);
+}
+
+void FolderCleanTopmost()
+{
+    // 保险起见 把所有方块的置顶标记都撸掉
+    // 之前设置窗口挂成顶层窗口 系统把所有者跟着标了 桌面图标就压在所有程序上面了
+    // 光清扩展样式不够 得走 SetWindowPos 才真把窗口从置顶层挪出来
+    for (FolderData* f : g_folders)
+    {
+        if (!f->hwnd || !IsWindow(f->hwnd)) continue;
+        LONG_PTR ex = GetWindowLongPtrW(f->hwnd, GWL_EXSTYLE);
+        if (ex & WS_EX_TOPMOST)
+            SetWindowLongPtrW(f->hwnd, GWL_EXSTYLE, ex & ~WS_EX_TOPMOST);
+        SetWindowPos(f->hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    }
 }

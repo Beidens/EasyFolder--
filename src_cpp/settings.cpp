@@ -856,7 +856,9 @@ void PanelSettingsOpen(FolderData* d)
     int y = wa.top + (avh - h) / 2;
 
     HWND owner = d->hwnd;
-    g_dlg = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, L"DeskFolderSettings", L"文件夹设置",
+    // 这里不能带 WS_EX_TOPMOST 有个坑 顶层窗口挂了所有者之后
+    // 系统会顺手把所有者也就是桌面图标也标成置顶 面板就永远压在别的程序上面
+    g_dlg = CreateWindowExW(WS_EX_TOOLWINDOW, L"DeskFolderSettings", L"文件夹设置",
         WS_POPUP, x, y, w, h, owner, NULL, inst, NULL);
     if (!g_dlg) return;
 
