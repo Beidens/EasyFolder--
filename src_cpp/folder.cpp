@@ -2,8 +2,6 @@
 
 using namespace Gdiplus;
 
-static const int COLS = 5;
-static const int ROWS = 3;
 static const UINT DUR = 260;
 static const wchar_t* kCls = L"DeskFolderTile";
 
@@ -37,6 +35,10 @@ struct FWin
     int hoverItem;
     bool hoverClose;
     bool menuOpen;
+    int itemIdx;        // 正被按住的那个格子 -1 就是没有
+    bool itemDrag;
+    POINT itemDown;
+    int itemGrabX, itemGrabY;
     DropTarget* drop;
     ULONGLONG t0;
     ULONGLONG lastToggle;
@@ -148,6 +150,59 @@ static void DrawTile(FWin* w, float a)
     }
 }
 
+// 画面板里的一格 位置从数据里读 所以拖到哪就在哪
+static void DrawCell(FWin* w, int i, float a)
+{
+    Graphics& g = *w->g;
+    const FolderEntry& it = w->d->items[i];
+    int cw = Px(CELL_DIP);
+    int isz = Px(72);
+    float ix = (REAL)(w->px + Px(24) + Px(it.x));
+    float iy = (REAL)(w->py + Px(50) + Px(24) + Px(it.y));
+    float t = (a - 0.22f - i * 0.025f) / 0.3f;
+    if (t < 0) t = 0;
+    if (t > 1) t = 1;
+    if (t <= 0) return;
+    float off = (1 - t) * Px(10);
+
+    if (w->hoverItem == i && t >= 1 && w->itemIdx < 0)
+    {
+        SolidBrush hb(Color((BYTE)Af(a, 24), 255, 255, 255));
+        GraphicsPath hp;
+        RoundPath(hp, RectF(ix + 4, iy + 4 + off, (REAL)(cw - 8), (REAL)(cw - 8)), (REAL)Px(12));
+        g.FillPath(&hb, &hp);
+    }
+
+    Bitmap* ico = IconGet(it.path, isz);
+    if (ico)
+    {
+        RectF dr(ix + (cw - isz) / 2.0f, iy + Px(8) + off, (REAL)isz, (REAL)isz);
+        ImageAttributes ia;
+        ColorMatrix cm;
+        ZeroMemory(&cm, sizeof(cm));
+        cm.m[0][0] = cm.m[1][1] = cm.m[2][2] = 1;
+        cm.m[3][3] = t * a;
+        ia.SetColorMatrix(&cm);
+        g.DrawImage(ico, dr, 0, 0, (int)ico->GetWidth(), (int)ico->GetHeight(), UnitPixel, &ia, NULL, NULL);
+    }
+    else
+    {
+        SolidBrush fb(Color((BYTE)Af(t * a, 55), 255, 255, 255));
+        GraphicsPath fp;
+        RoundPath(fp, RectF(ix + (cw - isz) / 2.0f, iy + Px(8) + off, (REAL)isz, (REAL)isz), (REAL)Px(16));
+        g.FillPath(&fb, &fp);
+    }
+
+    StringFormat f2;
+    f2.SetAlignment(StringAlignmentCenter);
+    f2.SetLineAlignment(StringAlignmentNear);
+    f2.SetTrimming(StringTrimmingEllipsisCharacter);
+    f2.SetFormatFlags(StringFormatFlagsNoWrap);
+    RectF lr(ix + 2, iy + Px(84) + off, (REAL)(cw - 4), (REAL)Px(28));
+    SolidBrush tb(Color((BYTE)Af(t * a, 236), 238, 240, 246));
+    g.DrawString(ItemLabel(it.path).c_str(), -1, FItem(), lr, &f2, &tb);
+}
+
 static void DrawPanel(FWin* w, float a)
 {
     Graphics& g = *w->g;
@@ -198,58 +253,12 @@ static void DrawPanel(FWin* w, float a)
     Pen sep(Color((BYTE)Af(a, 26), 255, 255, 255), 1.0f);
     g.DrawLine(&sep, (REAL)(w->px + Px(24)), (REAL)(w->py + Px(50)), (REAL)(w->px + w->pw - Px(24)), (REAL)(w->py + Px(50)));
 
-    int cw = Px(118);
-    int isz = Px(72);
     int n = (int)w->d->items.size();
-    for (int i = 0; i < n && i < COLS * ROWS; i++)
-    {
-        int col = i % COLS;
-        int row = i / COLS;
-        float ix = (REAL)(w->px + Px(24) + col * cw);
-        float iy = (REAL)(w->py + Px(50) + Px(24) + row * cw);
-        float t = (a - 0.22f - i * 0.025f) / 0.3f;
-        if (t < 0) t = 0;
-        if (t > 1) t = 1;
-        if (t <= 0) continue;
-        float off = (1 - t) * Px(10);
-
-        if (w->hoverItem == i && t >= 1)
-        {
-            SolidBrush hb(Color((BYTE)Af(a, 24), 255, 255, 255));
-            GraphicsPath hp;
-            RoundPath(hp, RectF(ix + 4, iy + 4 + off, (REAL)(cw - 8), (REAL)(cw - 8)), (REAL)Px(12));
-            g.FillPath(&hb, &hp);
-        }
-
-        Bitmap* ico = IconGet(w->d->items[i], isz);
-        if (ico)
-        {
-            RectF dr(ix + (cw - isz) / 2.0f, iy + Px(8) + off, (REAL)isz, (REAL)isz);
-            ImageAttributes ia;
-            ColorMatrix cm;
-            ZeroMemory(&cm, sizeof(cm));
-            cm.m[0][0] = cm.m[1][1] = cm.m[2][2] = 1;
-            cm.m[3][3] = t * a;
-            ia.SetColorMatrix(&cm);
-            g.DrawImage(ico, dr, 0, 0, (int)ico->GetWidth(), (int)ico->GetHeight(), UnitPixel, &ia, NULL, NULL);
-        }
-        else
-        {
-            SolidBrush fb(Color((BYTE)Af(t * a, 55), 255, 255, 255));
-            GraphicsPath fp;
-            RoundPath(fp, RectF(ix + (cw - isz) / 2.0f, iy + Px(8) + off, (REAL)isz, (REAL)isz), (REAL)Px(16));
-            g.FillPath(&fb, &fp);
-        }
-
-        StringFormat f2;
-        f2.SetAlignment(StringAlignmentCenter);
-        f2.SetLineAlignment(StringAlignmentNear);
-        f2.SetTrimming(StringTrimmingEllipsisCharacter);
-        f2.SetFormatFlags(StringFormatFlagsNoWrap);
-        RectF lr(ix + 2, iy + Px(84) + off, (REAL)(cw - 4), (REAL)Px(28));
-        SolidBrush tb(Color((BYTE)Af(t * a, 236), 238, 240, 246));
-        g.DrawString(ItemLabel(w->d->items[i]).c_str(), -1, FItem(), lr, &f2, &tb);
-    }
+    if (n > GRID_COLS * GRID_ROWS) n = GRID_COLS * GRID_ROWS;
+    for (int i = 0; i < n; i++)
+        if (i != w->itemIdx) DrawCell(w, i, a);
+    // 手上拖着的那个最后画 保证压在最上层
+    if (w->itemIdx >= 0 && w->itemIdx < n) DrawCell(w, w->itemIdx, a);
 }
 
 static void Render(FWin* w)
@@ -309,7 +318,7 @@ static void Render(FWin* w)
 static int AddDrop(FWin* w, HDROP drop)
 {
     int n = (int)DragQueryFileW(drop, 0xFFFFFFFF, NULL, 0);
-    int room = COLS * ROWS - (int)w->d->items.size();
+    int room = GRID_COLS * GRID_ROWS - (int)w->d->items.size();
     for (int i = 0; i < n && room > 0; i++)
     {
         wchar_t path[MAX_PATH * 4];
@@ -439,12 +448,13 @@ static void Tick(FWin* w)
 static int HitItem(FWin* w, POINT p)
 {
     if (w->anim < 0.99f) return -1;
-    int cw = Px(118);
+    int cw = Px(CELL_DIP);
     int n = (int)w->d->items.size();
-    for (int i = 0; i < n && i < COLS * ROWS; i++)
+    // 从后往前找 后画的在上面 点到叠在一起的地方应该拿上面那个
+    for (int i = n - 1; i >= 0; i--)
     {
-        int x = w->px + Px(24) + (i % COLS) * cw;
-        int y = w->py + Px(50) + Px(24) + (i / COLS) * cw;
+        int x = w->px + Px(24) + Px(w->d->items[i].x);
+        int y = w->py + Px(50) + Px(24) + Px(w->d->items[i].y);
         if (p.x >= x && p.x < x + cw && p.y >= y && p.y < y + cw) return i;
     }
     return -1;
@@ -519,7 +529,7 @@ static void ItemMenu(FWin* w, int index)
     DestroyMenu(m);
     w->menuOpen = false;
 
-    if (cmd == 1) LaunchPath(w->d->items[index]);
+    if (cmd == 1) LaunchPath(w->d->items[index].path);
     else if (cmd == 2)
     {
         StoreRemoveItem(w->d, index);
@@ -541,8 +551,8 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         w->hwnd = h;
         SetWindowLongPtrW(h, GWLP_USERDATA, (LONG_PTR)w);
 
-        w->pw = Px(COLS * 118 + 48);
-        w->ph = Px(ROWS * 118 + 50 + 48);
+        w->pw = Px(GRID_COLS * CELL_DIP + 48);
+        w->ph = Px(GRID_ROWS * CELL_DIP + 50 + 48);
         w->W = w->pw + Px(72);
         w->H = w->ph + Px(72);
         w->px = Px(36);
@@ -624,7 +634,21 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             POINT p;
             p.x = GET_X_LPARAM(lp);
             p.y = GET_Y_LPARAM(lp);
-            if (HitItem(w, p) >= 0 || HitClose(w, p)) return 0;
+            if (HitClose(w, p)) return 0;
+            int idx = HitItem(w, p);
+            if (idx >= 0)
+            {
+                // 按住图标先记下来 动起来才算拖 没动就是单击打开
+                POINT c;
+                GetCursorPos(&c);
+                w->itemIdx = idx;
+                w->itemDrag = false;
+                w->itemDown = c;
+                w->itemGrabX = c.x - (w->winX + w->px + Px(24) + Px(w->d->items[idx].x));
+                w->itemGrabY = c.y - (w->winY + w->py + Px(50) + Px(24) + Px(w->d->items[idx].y));
+                SetCapture(h);
+                return 0;
+            }
         }
         w->pressed = true;
         w->dragging = false;
@@ -639,6 +663,41 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         POINT p;
         p.x = GET_X_LPARAM(lp);
         p.y = GET_Y_LPARAM(lp);
+        if (w->itemIdx >= 0)
+        {
+            POINT c;
+            GetCursorPos(&c);
+            if (!w->itemDrag)
+            {
+                int ddx = c.x - w->itemDown.x;
+                int ddy = c.y - w->itemDown.y;
+                if (ddx < 0) ddx = -ddx;
+                if (ddy < 0) ddy = -ddy;
+                if (ddx + ddy > Px(6)) w->itemDrag = true;
+            }
+            if (w->itemDrag && w->itemIdx < (int)w->d->items.size())
+            {
+                FolderEntry& it = w->d->items[w->itemIdx];
+                int bx = c.x - w->itemGrabX - (w->winX + w->px + Px(24));
+                int by = c.y - w->itemGrabY - (w->winY + w->py + Px(50) + Px(24));
+                int nx = (int)(Dip(bx) + 0.5);
+                int ny = (int)(Dip(by) + 0.5);
+                // 别让格子被拖出面板 拖出去就看不见了
+                int mx = GRID_COLS * CELL_DIP - CELL_DIP;
+                int my = GRID_ROWS * CELL_DIP - CELL_DIP;
+                if (nx < 0) nx = 0;
+                if (ny < 0) ny = 0;
+                if (nx > mx) nx = mx;
+                if (ny > my) ny = my;
+                if (nx != it.x || ny != it.y)
+                {
+                    it.x = nx;
+                    it.y = ny;
+                    Render(w);
+                }
+            }
+            return 0;
+        }
         if (w->pressed && !w->dragging)
         {
             POINT c;
@@ -689,6 +748,17 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
     }
     case WM_LBUTTONUP:
     {
+        if (w->itemIdx >= 0)
+        {
+            int idx = w->itemIdx;
+            bool moved = w->itemDrag;
+            w->itemIdx = -1;
+            w->itemDrag = false;
+            if (GetCapture() == h) ReleaseCapture();
+            if (moved) StoreSave();
+            else if (idx < (int)w->d->items.size()) LaunchPath(w->d->items[idx].path);
+            return 0;
+        }
         bool wasDrag = w->dragging;
         w->pressed = false;
         w->dragging = false;
@@ -716,7 +786,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             return 0;
         }
         int idx = HitItem(w, p);
-        if (idx >= 0) LaunchPath(w->d->items[idx]);
+        if (idx >= 0) LaunchPath(w->d->items[idx].path);
         return 0;
     }
     case WM_RBUTTONUP:
@@ -790,12 +860,13 @@ void FolderShow(FolderData* d)
         reg = true;
     }
 
-    int W = Px(COLS * 118 + 48) + Px(72);
-    int H = Px(ROWS * 118 + 50 + 48) + Px(72);
+    int W = Px(GRID_COLS * CELL_DIP + 48) + Px(72);
+    int H = Px(GRID_ROWS * CELL_DIP + 50 + 48) + Px(72);
     FWin* w = new FWin();
     ZeroMemory(w, sizeof(FWin));
     w->d = d;
     w->hoverItem = -1;
+    w->itemIdx = -1;
 
     HWND h = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOOLWINDOW, kCls, L"", WS_POPUP,
         d->x - W / 2, d->y - H / 2, W, H, NULL, NULL, inst, w);

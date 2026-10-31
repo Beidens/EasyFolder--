@@ -53,7 +53,8 @@ static void BuildTray()
     g_nid.uID = 1;
     g_nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     g_nid.uCallbackMessage = WM_TRAY;
-    g_nid.hIcon = LoadIconW(NULL, IDI_APPLICATION);
+    g_nid.hIcon = LoadIconW(g_inst, MAKEINTRESOURCEW(101));
+    if (!g_nid.hIcon) g_nid.hIcon = LoadIconW(NULL, IDI_APPLICATION);
     lstrcpynW(g_nid.szTip, L"桌面图标文件夹 v" APP_VER_STR, 64);
     Shell_NotifyIconW(NIM_ADD, &g_nid);
 }
@@ -207,6 +208,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR args, int show)
     wc.lpfnWndProc = MsgProc;
     wc.hInstance = inst;
     wc.lpszClassName = kMsgCls;
+    wc.hIcon = LoadIconW(inst, MAKEINTRESOURCEW(101));
+    wc.hIconSm = LoadIconW(inst, MAKEINTRESOURCEW(101));
     RegisterClassExW(&wc);
 
     // 这个窗只是用来接单实例消息 不能做成 message only 不然别的进程 FindWindow 找不到

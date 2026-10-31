@@ -158,7 +158,19 @@ bool StoreLoad()
                 else if (line[0] == 'I' && p.size() >= 3)
                 {
                     FolderData* f = StoreFind(FromU8(p[1]));
-                    if (f) f->items.push_back(B64Dec(FromU8(p[2])));
+                    if (f)
+                    {
+                        FolderEntry it;
+                        it.path = B64Dec(FromU8(p[2]));
+                        // 老数据只有路径 没带位置 按原来的排列给它一个格子
+                        if (p.size() >= 5)
+                        {
+                            it.x = atoi(p[3].c_str());
+                            it.y = atoi(p[4].c_str());
+                        }
+                        else GridPos((int)f->items.size(), it.x, it.y);
+                        f->items.push_back(it);
+                    }
                 }
             }
             line.clear();
@@ -177,7 +189,8 @@ void StoreSave()
              + std::to_string(f->x) + "|" + std::to_string(f->y) + "|"
              + std::to_string(f->hue) + "\r\n";
         for (auto& it : f->items)
-            out += "I|" + ToU8(f->id) + "|" + ToU8(B64Enc(it)) + "\r\n";
+            out += "I|" + ToU8(f->id) + "|" + ToU8(B64Enc(it.path)) + "|"
+                 + std::to_string(it.x) + "|" + std::to_string(it.y) + "\r\n";
     }
     MakeDir(g_dataDir);
     WriteAll(DataFile(), out);
@@ -223,8 +236,11 @@ void StoreRemove(const wstring& id)
 bool StoreAddItem(FolderData* f, const wstring& path)
 {
     for (auto& it : f->items)
-        if (it == path) return false;
-    f->items.push_back(path);
+        if (it.path == path) return false;
+    FolderEntry ni;
+    ni.path = path;
+    GridPos((int)f->items.size(), ni.x, ni.y);
+    f->items.push_back(ni);
     StoreSave();
     return true;
 }

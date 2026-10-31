@@ -20,6 +20,18 @@
 using std::wstring;
 using std::vector;
 
+// 面板里的格子尺寸 都按 dip 走 高分屏缩放时才不会乱
+static const int GRID_COLS = 5;
+static const int GRID_ROWS = 3;
+static const int CELL_DIP = 118;
+
+struct FolderEntry
+{
+    wstring path;
+    int x;          // 在面板内容区里的位置 单位 dip
+    int y;
+};
+
 struct FolderData
 {
     wstring id;
@@ -27,7 +39,7 @@ struct FolderData
     int x;          // 图标中心 物理像素
     int y;
     int hue;
-    vector<wstring> items;
+    vector<FolderEntry> items;
     HWND hwnd;
     void* extra;    // 窗口私有数据
 };
@@ -42,6 +54,21 @@ inline int Px(double dip)
 {
     int v = (int)(dip * g_scale * g_fit + 0.5);
     return v < 1 ? 1 : v;
+}
+
+// 反过来的 鼠标位置要换算回 dip 才好存
+inline double Dip(int px)
+{
+    double k = (double)g_scale * (double)g_fit;
+    return k <= 0 ? (double)px : (double)px / k;
+}
+
+// 新加进来的条目先摆空格子 后面用户自己拖
+inline void GridPos(int index, int& x, int& y)
+{
+    if (index < 0) index = 0;
+    x = (index % GRID_COLS) * CELL_DIP;
+    y = (index / GRID_COLS) * CELL_DIP;
 }
 
 wstring AppDataDir();
