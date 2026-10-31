@@ -670,6 +670,25 @@ static void DeskLayer(FWin* w)
     SetWindowPos(w->hwnd, above, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 }
 
+// 被系统最小化或者藏起来了 就把自己弄回来
+// 关键是别抢前台 显示桌面那一下最烦人来劲的窗口 用 SW_RESTORE 会把它激活 结果被系统反手再压回去 方块就一直闪到看不见
+// 换成 SW_SHOWNOACTIVATE 站回来但不吱声 桌面层该在哪还在哪
+static void WakeUp(HWND h)
+{
+    if (IsIconic(h))
+    {
+        WINDOWPLACEMENT pl;
+        ZeroMemory(&pl, sizeof(pl));
+        pl.length = sizeof(pl);
+        if (GetWindowPlacement(h, &pl))
+        {
+            pl.showCmd = SW_SHOWNOACTIVATE;
+            SetWindowPlacement(h, &pl);
+        }
+    }
+    if (!IsWindowVisible(h)) ShowWindow(h, SW_SHOWNOACTIVATE);
+}
+
 static void FolderMenu(FWin* w)
 {
     HMENU m = CreatePopupMenu();
@@ -869,8 +888,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         // 从被藏起来的状态拉回来 位置和画的内容都还在
         if (w && IsWindow(h))
         {
-            if (IsIconic(h)) ShowWindow(h, SW_RESTORE);
-            if (!IsWindowVisible(h)) ShowWindow(h, SW_SHOWNOACTIVATE);
+            WakeUp(h);
             Render(w);
             DeskLayer(w);
         }

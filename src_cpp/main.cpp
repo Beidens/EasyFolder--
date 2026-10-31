@@ -132,6 +132,12 @@ static void TrayMenu()
     AppendMenuW(m, MF_POPUP, (UINT_PTR)sub, L"设置");
     AppendMenuW(m, MF_STRING | (g_autoStart ? MF_CHECKED : MF_UNCHECKED), 5, L"开机自启动");
 
+    // 关于挂二级菜单 一个开源地址 一个作者主页
+    HMENU about = CreatePopupMenu();
+    AppendMenuW(about, MF_STRING, 6, L"开源地址 (GitHub)");
+    AppendMenuW(about, MF_STRING, 7, L"作者主页 (讲讲君)");
+    AppendMenuW(m, MF_POPUP, (UINT_PTR)about, L"关于");
+
     AppendMenuW(m, MF_SEPARATOR, 0, NULL);
     AppendMenuW(m, MF_STRING, 3, L"退出");
     POINT p;
@@ -143,6 +149,8 @@ static void TrayMenu()
     else if (cmd == 2) ShowAll();
     else if (cmd == 3) DestroyWindow(g_msgWnd);
     else if (cmd == 5) AutoStartApply(!g_autoStart);
+    else if (cmd == 6) ShellExecuteW(NULL, L"open", L"https://github.com/Beidens/EasyFolder--", NULL, NULL, SW_SHOWNORMAL);
+    else if (cmd == 7) ShellExecuteW(NULL, L"open", L"https://space.bilibili.com/3706962399202054", NULL, NULL, SW_SHOWNORMAL);
     else if (cmd >= 1000 && cmd - 1000 < (int)g_folders.size())
     {
         FolderData* d = g_folders[cmd - 1000];
