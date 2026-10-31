@@ -510,6 +510,8 @@ public:
 
 static void KeepInWorkArea(FWin* w);
 static void HomeBack(FWin* w);
+static void LeaveWatch(FWin* w, bool on);
+static void MoveWin(FWin* w, int x, int y);
 
 static void StartAnim(FWin* w, bool expand)
 {
@@ -520,6 +522,7 @@ static void StartAnim(FWin* w, bool expand)
     w->from = w->anim;
     w->t0 = GetTickCount64();
     SetTimer(w->hwnd, 1, 15, NULL);
+    LeaveWatch(w, expand);
 }
 
 static void Tick(FWin* w)
@@ -533,6 +536,7 @@ static void Tick(FWin* w)
     {
         w->anim = to;
         KillTimer(w->hwnd, 1);
+        if (!w->expanded) LeaveWatch(w, false);
     }
     Render(w);
 }
@@ -604,7 +608,7 @@ static void KeepInWorkArea(FWin* w)
 
     w->winX = x;
     w->winY = y;
-    SetWindowPos(w->hwnd, NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    MoveWin(w, x, y);
 }
 
 static void HomeBack(FWin* w)
@@ -612,25 +616,47 @@ static void HomeBack(FWin* w)
     if (w->winX == w->homeX && w->winY == w->homeY) return;
     w->winX = w->homeX;
     w->winY = w->homeY;
-    SetWindowPos(w->hwnd, NULL, w->winX, w->winY, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    MoveWin(w, w->winX, w->winY);
 }
 
-// 方块只能待在桌面正上方那一格 程序窗口永远压在它上面
-// 麻烦的是桌面窗口本身是个普通窗口 点一下桌面或者显示桌面都会把它抬起来盖住方块
-// 那就一直盯着 只要方块下面挨着的不是桌面 就塞回桌面正上方
-static void DeskLayer(FWin* w)
+// 桌面本身就是一个窗口 把方块挂成它的子窗口 天生就在桌面这一层
+// 别的程序不管怎么开怎么关都在它上面 不用再去抢层叠顺序
+// 以前是把方块插到桌面正上方那一格 碰上提权程序的窗口系统不给动 方块只好浮在最前面
+static HWND DeskHost()
 {
-    if (!w || !w->hwnd || !IsWindow(w->hwnd)) return;
-    if (!IsWindowVisible(w->hwnd) || IsIconic(w->hwnd)) return;
-    HWND desk = FindWindowW(L"Progman", NULL);
-    if (!desk || !IsWindow(desk) || !IsWindowVisible(desk)) return;
-    if (GetWindow(w->hwnd, GW_HWNDNEXT) == desk) return;
+    HWND h = FindWindowW(L"Progman", NULL);
+    if (h && IsWindow(h)) return h;
+    h = GetShellWindow();
+    if (h && IsWindow(h)) return h;
+    return NULL;
+}
 
-    HWND prev = GetWindow(desk, GW_HWNDPREV);
-    if (prev == w->hwnd) return;
-    if (!prev) prev = HWND_TOP;   // 桌面上什么都没有 直接放最上面
-    // 桌面上面那个窗口 方块插在它和桌面中间 程序依然在方块上面
-    SetWindowPos(w->hwnd, prev, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+// 程序里位置统一按屏幕坐标算 只有往父窗口塞的那一下才换成客户区
+static void MoveWin(FWin* w, int x, int y)
+{
+    POINT p;
+    p.x = x;
+    p.y = y;
+    HWND par = GetParent(w->hwnd);
+    if (par) ScreenToClient(par, &p);
+    SetWindowPos(w->hwnd, NULL, p.x, p.y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+// 面板展开以后点到别处要收起来 挂到桌面上以后收不到 WM_ACTIVATE 了 自己盯前台窗口
+static void LeaveWatch(FWin* w, bool on)
+{
+    if (on) SetTimer(w->hwnd, 3, 200, NULL);
+    else KillTimer(w->hwnd, 3);
+}
+
+static void CheckLeave(FWin* w)
+{
+    if (!w->expanded || w->menuOpen) return;
+    HWND fg = GetForegroundWindow();
+    if (!fg) return;
+    // 前台还是方块自己 或者是桌面 说明人没走
+    if (fg == w->hwnd || fg == GetAncestor(w->hwnd, GA_ROOT)) return;
+    StartAnim(w, false);
 }
 
 static void FolderMenu(FWin* w)
@@ -643,7 +669,9 @@ static void FolderMenu(FWin* w)
     POINT p;
     GetCursorPos(&p);
     w->menuOpen = true;
-    SetForegroundWindow(w->hwnd);
+    // 菜单要有个前台窗口才肯在点到别处的时候收起来 方块自己挂在桌面上 就让桌面当这个前台
+    HWND own = GetParent(w->hwnd);
+    SetForegroundWindow(own ? own : w->hwnd);
     int cmd = (int)TrackPopupMenuEx(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, p.x, p.y, w->hwnd, NULL);
     PostMessageW(w->hwnd, WM_NULL, 0, 0);
     DestroyMenu(m);
@@ -686,7 +714,8 @@ static void ItemMenu(FWin* w, int index)
     POINT p;
     GetCursorPos(&p);
     w->menuOpen = true;
-    SetForegroundWindow(w->hwnd);
+    HWND own = GetParent(w->hwnd);
+    SetForegroundWindow(own ? own : w->hwnd);
     int cmd = (int)TrackPopupMenuEx(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, p.x, p.y, w->hwnd, NULL);
     PostMessageW(w->hwnd, WM_NULL, 0, 0);
     DestroyMenu(m);
@@ -731,7 +760,6 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
     case WM_SHOWWINDOW:
         // 被外部藏起来了 桌面图标理应一直挂着 拉回来
         if (!wp && w) PostMessageW(h, WM_APP + 2, 0, 0);
-        else if (wp && w) DeskLayer(w);
         return 0;
     case WM_CREATE:
     {
@@ -795,17 +823,20 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         w->winY = y;
         w->homeX = x;
         w->homeY = y;
-        // 放好位置就行 别碰层叠顺序 不然会跑到别的程序上面去
-        SetWindowPos(h, NULL, x, y, w->W, w->H, SWP_NOZORDER | SWP_NOACTIVATE);
-        // 半秒看一次层叠顺序 桌面被抬起来也不会把方块盖掉
-        SetTimer(h, 2, 400, NULL);
+        // 位置按屏幕算 塞进父窗口之前换成客户区坐标
+        POINT sp;
+        sp.x = x;
+        sp.y = y;
+        HWND par = GetParent(h);
+        if (par) ScreenToClient(par, &sp);
+        SetWindowPos(h, NULL, sp.x, sp.y, w->W, w->H, SWP_NOZORDER | SWP_NOACTIVATE);
 
         Render(w);
         return 0;
     }
     case WM_TIMER:
         if (wp == 1) Tick(w);
-        else if (wp == 2) DeskLayer(w);
+        else if (wp == 3) CheckLeave(w);
         return 0;
     case WM_PAINT:
     {
@@ -818,13 +849,12 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         Render(w);
         return 0;
     case WM_APP + 2:
-        // 从最小化或者被藏起来的状态拉回来 位置和画的内容都还在
+        // 从被藏起来的状态拉回来 位置和画的内容都还在
         if (w && IsWindow(h))
         {
             if (IsIconic(h)) ShowWindow(h, SW_RESTORE);
             if (!IsWindowVisible(h)) ShowWindow(h, SW_SHOWNOACTIVATE);
             Render(w);
-            DeskLayer(w);
         }
         return 0;
     case WM_ACTIVATE:
@@ -937,7 +967,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             w->winX = x;
             w->winY = y;
             // 分层窗口的内容由 UpdateLayeredWindow 一起搬 光调 SetWindowPos 会只动壳子
-            SetWindowPos(h, NULL, w->winX, w->winY, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            MoveWin(w, w->winX, w->winY);
             Render(w);
             return 0;
         }
@@ -984,7 +1014,10 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             ULONGLONG now = GetTickCount64();
             if (now - w->lastToggle < 300) return 0;
             w->lastToggle = now;
-            SetForegroundWindow(h);
+            // 挂桌面上的窗口自己抢不到前台 让桌面当前台 顺手给个焦点 这样 Esc 还能收面板
+            HWND own = GetParent(h);
+            SetForegroundWindow(own ? own : h);
+            SetFocus(h);
             StartAnim(w, true);
             return 0;
         }
@@ -1080,18 +1113,27 @@ void FolderShow(FolderData* d)
     w->hoverItem = -1;
     w->itemIdx = -1;
 
+    // 有桌面就挂成桌面的子窗口 这才是真的在桌面那一层
+    // 直接按子窗口建出来会被系统挡回来 183 所以先当普通窗口建好 转样式再挂上去
+    // 万一桌面窗口没找到 就留在原来的普通窗口 起码还能画出来
+    HWND host = DeskHost();
     HWND h = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOOLWINDOW, kCls, L"", WS_POPUP,
         d->x - W / 2, d->y - H / 2, W, H, NULL, NULL, inst, w);
-    if (!h)
+    if (!h) return;
+    if (host)
     {
-        delete w;
-        return;
+        LONG_PTR st = GetWindowLongPtrW(h, GWL_STYLE);
+        st = (st & ~(LONG_PTR)WS_POPUP) | WS_CHILD | WS_CLIPSIBLINGS;
+        SetWindowLongPtrW(h, GWL_STYLE, st);
+        LONG_PTR exs = GetWindowLongPtrW(h, GWL_EXSTYLE);
+        SetWindowLongPtrW(h, GWL_EXSTYLE, exs & ~(LONG_PTR)WS_EX_TOOLWINDOW);
+        SetParent(h, host);
+        // 换了爹 坐标要按新父窗口的客户区重算一遍
+        MoveWin(w, w->winX, w->winY);
     }
     d->hwnd = h;
     d->extra = w;
     ShowWindow(h, SW_SHOWNOACTIVATE);
-    // 刚显示出来是在普通窗口最上面 马上按回桌面正上方
-    DeskLayer(w);
 }
 
 void FolderDestroy(FolderData* d)
@@ -1131,6 +1173,8 @@ void FolderCleanTopmost()
         LONG_PTR ex = GetWindowLongPtrW(f->hwnd, GWL_EXSTYLE);
         if (ex & WS_EX_TOPMOST)
             SetWindowLongPtrW(f->hwnd, GWL_EXSTYLE, ex & ~WS_EX_TOPMOST);
-        SetWindowPos(f->hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        // 挂到桌面底下的窗口没有层叠顺序这一说 别去动它
+        if (!GetParent(f->hwnd))
+            SetWindowPos(f->hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
 }

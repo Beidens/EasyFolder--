@@ -96,6 +96,16 @@ static void ShowAll()
     for (FolderData* f : g_folders) FolderShow(f);
 }
 
+// 方块挂在桌面窗口底下 资源管理器一重启那个窗口连同方块一起没了 隔几秒看一眼少了就补回来
+static void ReviveTiles()
+{
+    for (FolderData* f : g_folders)
+    {
+        if (f->hwnd && IsWindow(f->hwnd)) continue;
+        FolderShow(f);
+    }
+}
+
 static void BuildTray()
 {
     ZeroMemory(&g_nid, sizeof(g_nid));
@@ -228,6 +238,9 @@ static LRESULT CALLBACK MsgProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
     case WM_DESTROY:
         PostQuitMessage(0);
         return 0;
+    case WM_TIMER:
+        if (wp == 1) ReviveTiles();
+        return 0;
     }
     return DefWindowProcW(h, m, wp, lp);
 }
@@ -297,6 +310,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR args, int show)
     BuildTray();
     ShowAll();
     FolderCleanTopmost();
+    SetTimer(g_msgWnd, 1, 3000, NULL);
 
     if (create) DoCreate(name);
 
