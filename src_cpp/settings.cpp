@@ -27,7 +27,11 @@ static int g_target;    // 0 面板填充 1 面板描边 2 桌面方块描边
 static int g_edgeW;
 
 static RECT g_rClose, g_rDone, g_rPick, g_rReset;
-static RECT g_rTab0, g_rTab1, g_rTab2;
+static RECT g_rTab0, g_rTab1, g_rTab2, g_rTab3;
+static RECT g_rTileTrack, g_rItemTrack;
+static bool g_sizeTab;      // 大小这页签跟颜色那几个不是一回事 单独记
+static int g_tileDip;       // 桌面方块大小
+static int g_itemDip;       // 展开之后图标大小
 static POINT g_wc;
 static int g_wr;
 static RECT g_rBar;
@@ -339,13 +343,72 @@ static void ResetSkin()
     Refresh();
 }
 
+// 大小这页跟颜色那几个输入框互斥 切过来的时候把它们收起来
+static void ShowColorCtl(bool on)
+{
+    HWND arr[4] = { g_hR, g_hG, g_hB, g_hA };
+    for (int i = 0; i < 4; i++)
+        if (arr[i]) ShowWindow(arr[i], on ? SW_SHOW : SW_HIDE);
+    if (!on)
+    {
+        HWND f = GetFocus();
+        for (int i = 0; i < 4; i++)
+            if (arr[i] && f == arr[i]) SetFocus(g_dlg);
+    }
+}
+
+static void LoadSizes()
+{
+    g_tileDip = g_d->tileSize > 0 ? g_d->tileSize : 120;
+    g_itemDip = g_d->itemSize > 0 ? g_d->itemSize : 72;
+}
+
+static void ApplySizes()
+{
+    g_d->tileSize = g_tileDip;
+    g_d->itemSize = g_itemDip;
+    StoreSave();
+}
+
 static void SetTarget(int t)
 {
-    if (t == g_target) return;
+    bool same = (t == g_target);
+    g_sizeTab = false;
+    ShowColorCtl(true);
+    if (same)
+    {
+        Refresh();
+        return;
+    }
     g_target = t;
     PullTarget();
     if (g_wheelVal != g_val) MakeWheel();
     SyncEdits();
+    Refresh();
+}
+
+static void SetSizeTab()
+{
+    if (g_sizeTab) return;
+    g_sizeTab = true;
+    LoadSizes();
+    ShowColorCtl(false);
+    Refresh();
+}
+
+static void HitSize(POINT p)
+{
+    RECT* r = g_drag == 4 ? &g_rTileTrack : &g_rItemTrack;
+    int lo = g_drag == 4 ? 72 : 48;
+    int hi = g_drag == 4 ? 220 : 120;
+    int w = r->right - r->left;
+    if (w < 1) return;
+    float k = (float)(p.x - r->left) / (float)w;
+    if (k < 0) k = 0;
+    if (k > 1) k = 1;
+    int v = lo + (int)(k * (hi - lo) + 0.5f);
+    if (g_drag == 4) g_tileDip = v;
+    else g_itemDip = v;
     Refresh();
 }
 
@@ -426,6 +489,9 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         g_rTab0 = Rc(26, 310, 90, 34);
         g_rTab1 = Rc(126, 310, 90, 34);
         g_rTab2 = Rc(226, 310, 90, 34);
+        g_rTab3 = Rc(326, 310, 90, 34);
+        g_rTileTrack = Rc(26, 400, 300, 8);
+        g_rItemTrack = Rc(26, 514, 300, 8);
 
         g_wc.x = Px(130);
         g_wc.y = Px(442);
@@ -503,6 +569,32 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         if (PtInRect(&g_rTab0, p)) { SetTarget(0); return 0; }
         if (PtInRect(&g_rTab1, p)) { SetTarget(1); return 0; }
         if (PtInRect(&g_rTab2, p)) { SetTarget(2); return 0; }
+        if (PtInRect(&g_rTab3, p)) { SetSizeTab(); return 0; }
+
+        if (g_sizeTab)
+        {
+            RECT tt = g_rTileTrack;
+            tt.top -= Px(14);
+            tt.bottom += Px(14);
+            if (PtInRect(&tt, p))
+            {
+                g_drag = 4;
+                SetCapture(h);
+                HitSize(p);
+                return 0;
+            }
+            RECT ti = g_rItemTrack;
+            ti.top -= Px(14);
+            ti.bottom += Px(14);
+            if (PtInRect(&ti, p))
+            {
+                g_drag = 5;
+                SetCapture(h);
+                HitSize(p);
+                return 0;
+            }
+            return 0;
+        }
 
         for (int i = 0; i < 8; i++)
         {
@@ -552,7 +644,8 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         p.y = GET_Y_LPARAM(lp);
         if (g_drag == 1) HitWheel(p);
         else if (g_drag == 2) HitBar(p);
-        else HitTrack(p);
+        else if (g_drag == 3) HitTrack(p);
+        else HitSize(p);
         return 0;
     }
     case WM_LBUTTONUP:
@@ -561,8 +654,8 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         int was = g_drag;
         g_drag = 0;
         if (GetCapture() == h) ReleaseCapture();
-        (void)was;
-        PushAll();
+        if (was == 4 || was == 5) ApplySizes();
+        else PushAll();
         return 0;
     }
     case WM_PAINT:
@@ -630,7 +723,8 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             };
             frame(26, 88, 588, 44);
             int rows[4] = { 346, 394, 442, 490 };
-            for (int i = 0; i < 4; i++) frame(320, rows[i], 100, 36);
+            if (!g_sizeTab)
+                for (int i = 0; i < 4; i++) frame(320, rows[i], 100, 36);
 
             // 图片预览
             RectF pv((REAL)Px(26), (REAL)Px(176), (REAL)Px(96), (REAL)Px(96));
@@ -673,11 +767,14 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             button(g_rPick, L"选择图片", false, false);
             button(g_rReset, L"恢复默认", false, false);
 
-            // 填充 描边 图标 三个页签
-            button(g_rTab0, L"填充", false, g_target == 0);
-            button(g_rTab1, L"描边", false, g_target == 1);
-            button(g_rTab2, L"图标", false, g_target == 2);
+            // 填充 描边 图标 大小 四个页签
+            button(g_rTab0, L"填充", false, !g_sizeTab && g_target == 0);
+            button(g_rTab1, L"描边", false, !g_sizeTab && g_target == 1);
+            button(g_rTab2, L"图标", false, !g_sizeTab && g_target == 2);
+            button(g_rTab3, L"大小", false, g_sizeTab);
 
+            if (!g_sizeTab)
+            {
             // 色轮
             if (g_wheel) g.DrawImage(g_wheel, RectF((REAL)(g_wc.x - g_wr), (REAL)(g_wc.y - g_wr), (REAL)(g_wr * 2), (REAL)(g_wr * 2)));
             float ang = g_hue * 3.14159f / 180.f;
@@ -782,6 +879,41 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
                 }
             }
 
+            }
+            else
+            {
+                // 大小这页 两条滑条 拖完关掉窗口才真正重排
+                auto slider = [&](RECT tr, int v, int lo, int hi)
+                {
+                    RectF tkr((REAL)tr.left, (REAL)tr.top, (REAL)(tr.right - tr.left), (REAL)(tr.bottom - tr.top));
+                    GraphicsPath tkp;
+                    RoundPath(tkp, tkr, (REAL)(tkr.Height / 2));
+                    SolidBrush tks(Col(0x3A3B42, 255));
+                    g.FillPath(&tks, &tkp);
+                    float k = (float)(v - lo) / (float)(hi - lo);
+                    float kx = tkr.X + k * tkr.Width;
+                    SolidBrush kf(Col(0x4C6EF5, 255));
+                    g.FillEllipse(&kf, kx - Px(9), tkr.Y + tkr.Height / 2 - Px(9), (REAL)Px(18), (REAL)Px(18));
+                    Pen kp(Col(0xFFFFFF, 60), 1.f);
+                    g.DrawEllipse(&kp, kx - Px(9), tkr.Y + tkr.Height / 2 - Px(9), (REAL)Px(18), (REAL)Px(18));
+                    wchar_t vb[16];
+                    wsprintfW(vb, L"%d", v);
+                    SolidBrush vv(Col(0xC8CAD2, 220));
+                    RectF vr((REAL)(tr.right + Px(18)), (REAL)(tr.top - Px(10)), (REAL)Px(70), (REAL)Px(28));
+                    g.DrawString(vb, -1, g_fLab, vr, &sf, &vv);
+                };
+
+                label(L"桌面图标大小", 26, 360, 0x8A8D96);
+                slider(g_rTileTrack, g_tileDip, 72, 220);
+
+                label(L"展开后图标大小", 26, 474, 0x8A8D96);
+                slider(g_rItemTrack, g_itemDip, 48, 120);
+
+                SolidBrush hint(Col(0x8A8D96, 170));
+                RectF hr((REAL)Px(26), (REAL)Px(566), (REAL)Px(520), (REAL)Px(24));
+                g.DrawString(L"拖完关掉这个窗口 图标就按新的尺寸重排", -1, g_fSm, hr, &sf, &hint);
+            }
+
             button(g_rDone, L"完成", true, false);
 
             Graphics gdc(dc);
@@ -835,6 +967,7 @@ void PanelSettingsOpen(FolderData* d)
 
     g_d = d;
     g_target = 0;
+    g_sizeTab = false;
     g_drag = 0;
     g_wasActive = false;
 

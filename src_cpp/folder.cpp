@@ -5,6 +5,29 @@ using namespace Gdiplus;
 static const UINT DUR = 260;
 static const wchar_t* kCls = L"DeskFolderTile";
 
+// 方块和格子的尺寸 老数据这两个字段是 -1 就走默认
+static int TileDip(FolderData* d)
+{
+    int v = d->tileSize > 0 ? d->tileSize : 120;
+    if (v < 72) v = 72;
+    if (v > 220) v = 220;
+    return v;
+}
+
+static int ItemDip(FolderData* d)
+{
+    int v = d->itemSize > 0 ? d->itemSize : 72;
+    if (v < 48) v = 48;
+    if (v > 120) v = 120;
+    return v;
+}
+
+// 格子跟着图标一起长 图标调大以后里面的字和间距才不会挤成一团
+static int CellDip(FolderData* d)
+{
+    return ItemDip(d) + 46;
+}
+
 static Font* g_fTitle;
 static Font* g_fItem;
 static Font* g_fLabel;
@@ -201,8 +224,8 @@ static void DrawCell(FWin* w, int i, float a)
 {
     Graphics& g = *w->g;
     const FolderEntry& it = w->d->items[i];
-    int cw = Px(CELL_DIP);
-    int isz = Px(72);
+    int cw = Px(CellDip(w->d));
+    int isz = Px(ItemDip(w->d));
     float ix = (REAL)(w->px + Px(24) + Px(it.x));
     float iy = (REAL)(w->py + Px(50) + Px(24) + Px(it.y));
     float t = (a - 0.22f - i * 0.025f) / 0.3f;
@@ -244,7 +267,7 @@ static void DrawCell(FWin* w, int i, float a)
     f2.SetLineAlignment(StringAlignmentNear);
     f2.SetTrimming(StringTrimmingEllipsisCharacter);
     f2.SetFormatFlags(StringFormatFlagsNoWrap);
-    RectF lr(ix + 2, iy + Px(84) + off, (REAL)(cw - 4), (REAL)Px(28));
+    RectF lr(ix + 2, iy + Px(8) + isz + Px(6) + off, (REAL)(cw - 4), (REAL)Px(28));
     SolidBrush tb(Color((BYTE)Af(t * a, 236), 238, 240, 246));
     g.DrawString(ItemLabel(it.path).c_str(), -1, FItem(), lr, &f2, &tb);
 }
@@ -517,7 +540,7 @@ static void Tick(FWin* w)
 static int HitItem(FWin* w, POINT p)
 {
     if (w->anim < 0.99f) return -1;
-    int cw = Px(CELL_DIP);
+    int cw = Px(CellDip(w->d));
     int n = (int)w->d->items.size();
     // 从后往前找 后画的在上面 点到叠在一起的地方应该拿上面那个
     for (int i = n - 1; i >= 0; i--)
@@ -621,10 +644,10 @@ static void FolderMenu(FWin* w)
     }
     else if (cmd == 4)
     {
-        // 设置窗口是模态的 关掉之后把改了的东西重画一遍
+        // 设置窗口是模态的 关掉之后尺寸和配色都可能变了 按新的重开一遍
         PanelSettingsOpen(w->d);
         FolderCleanTopmost();
-        Render(w);
+        FolderApplyLook(w->d);
     }
     else if (cmd == 3)
     {
@@ -674,6 +697,22 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             p->hwndInsertAfter = HWND_NOTOPMOST;
         break;
     }
+    case WM_SYSCOMMAND:
+        // 显示桌面那一下会把窗口最小化 这里直接拒掉 不然回到桌面图标就不见了
+        if ((wp & 0xFFF0) == SC_MINIMIZE) return 0;
+        break;
+    case WM_SIZE:
+        // 还是被最小化了就赶紧站起来
+        if (wp == SIZE_MINIMIZED)
+        {
+            PostMessageW(h, WM_APP + 2, 0, 0);
+            return 0;
+        }
+        break;
+    case WM_SHOWWINDOW:
+        // 被外部藏起来了 桌面图标理应一直挂着 拉回来
+        if (!wp && w) PostMessageW(h, WM_APP + 2, 0, 0);
+        return 0;
     case WM_CREATE:
     {
         CREATESTRUCTW* cs = (CREATESTRUCTW*)lp;
@@ -681,13 +720,15 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         w->hwnd = h;
         SetWindowLongPtrW(h, GWLP_USERDATA, (LONG_PTR)w);
 
-        w->pw = Px(GRID_COLS * CELL_DIP + 48);
-        w->ph = Px(GRID_ROWS * CELL_DIP + 50 + 48);
-        w->W = w->pw + Px(72);
-        w->H = w->ph + Px(72);
+        int cell = CellDip(w->d);
+        w->pw = Px(GRID_COLS * cell + 48);
+        w->ph = Px(GRID_ROWS * cell + 50 + 48);
+        int ts = Px(TileDip(w->d));
+        w->W = (w->pw > ts ? w->pw : ts) + Px(72);
+        w->H = (w->ph > ts ? w->ph : ts) + Px(72);
         w->px = Px(36);
         w->py = Px(36);
-        w->ts = Px(120);
+        w->ts = ts;
         w->tx = (w->W - w->ts) / 2;
         w->ty = (w->H - w->ts) / 2 - Px(8);
 
@@ -752,6 +793,15 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
     case WM_APP + 1:
         Render(w);
         return 0;
+    case WM_APP + 2:
+        // 从最小化或者被藏起来的状态拉回来 位置和画的内容都还在
+        if (w && IsWindow(h))
+        {
+            if (IsIconic(h)) ShowWindow(h, SW_RESTORE);
+            if (!IsWindowVisible(h)) ShowWindow(h, SW_SHOWNOACTIVATE);
+            Render(w);
+        }
+        return 0;
     case WM_ACTIVATE:
         if (LOWORD(wp) == WA_INACTIVE && w->expanded && !w->menuOpen)
             StartAnim(w, false);
@@ -815,8 +865,9 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
                 int nx = (int)(Dip(bx) + 0.5);
                 int ny = (int)(Dip(by) + 0.5);
                 // 别让格子被拖出面板 拖出去就看不见了
-                int mx = GRID_COLS * CELL_DIP - CELL_DIP;
-                int my = GRID_ROWS * CELL_DIP - CELL_DIP;
+                int cell = CellDip(w->d);
+                int mx = GRID_COLS * cell - cell;
+                int my = GRID_ROWS * cell - cell;
                 if (nx < 0) nx = 0;
                 if (ny < 0) ny = 0;
                 if (nx > mx) nx = mx;
@@ -992,8 +1043,12 @@ void FolderShow(FolderData* d)
         reg = true;
     }
 
-    int W = Px(GRID_COLS * CELL_DIP + 48) + Px(72);
-    int H = Px(GRID_ROWS * CELL_DIP + 50 + 48) + Px(72);
+    int cell = CellDip(d);
+    int pw = Px(GRID_COLS * cell + 48);
+    int ph = Px(GRID_ROWS * cell + 50 + 48);
+    int ts = Px(TileDip(d));
+    int W = (pw > ts ? pw : ts) + Px(72);
+    int H = (ph > ts ? ph : ts) + Px(72);
     FWin* w = new FWin();
     ZeroMemory(w, sizeof(FWin));
     w->d = d;
@@ -1017,6 +1072,20 @@ void FolderDestroy(FolderData* d)
     if (d->hwnd && IsWindow(d->hwnd)) DestroyWindow(d->hwnd);
     d->hwnd = NULL;
     d->extra = NULL;
+}
+
+void FolderApplyLook(FolderData* d)
+{
+    if (!d || !d->hwnd || !IsWindow(d->hwnd)) return;
+    FWin* w = (FWin*)d->extra;
+    // 尺寸改过之后窗口本身也得换大小 直接按原来的中心点重建最省事
+    if (w)
+    {
+        d->x = w->winX + w->W / 2;
+        d->y = w->winY + w->H / 2;
+    }
+    FolderDestroy(d);
+    FolderShow(d);
 }
 
 void FolderReloadItems(FolderData* d)

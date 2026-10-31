@@ -50,6 +50,8 @@ struct FolderData
     int skinEdgeColor;  // 方块上那张图的描边颜色
     int skinEdgeAlpha;
     int skinEdgeWidth;  // 方块描边粗细 dip 乘 10 0 就是不画
+    int tileSize;       // 桌面方块多大 单位 dip
+    int itemSize;       // 展开之后里面图标多大 单位 dip
     HWND hwnd;
     void* extra;    // 窗口私有数据
 };
@@ -102,5 +104,6 @@ void FolderShow(FolderData* d);
 void FolderDestroy(FolderData* d);
 void FolderReloadItems(FolderData* d);
 void FolderCleanTopmost();
+void FolderApplyLook(FolderData* d);
 void AppCreateFolder();
 void PanelSettingsOpen(FolderData* d);

@@ -149,6 +149,7 @@ static void TrayMenu()
         FolderShow(d);
         PanelSettingsOpen(d);
         FolderCleanTopmost();
+        FolderApplyLook(d);
     }
 }
 
