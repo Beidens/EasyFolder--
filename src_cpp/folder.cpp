@@ -622,6 +622,26 @@ static void MoveWin(FWin* w, int x, int y)
 
 static void FolderMenu(FWin* w);
 
+// 被系统最小化或者藏起来了 就把自己弄回来
+// 关键是别抢前台 显示桌面那一下最烦人来劲的窗口 用 SW_RESTORE 会把它激活 结果被系统反手再压回去 方块就一直闪到看不见
+// 换成 SW_SHOWNOACTIVATE 站回来但不吱声 桌面层该在哪还在哪
+static void WakeUp(HWND h)
+{
+    if (!h || !IsWindow(h)) return;
+    if (IsIconic(h))
+    {
+        WINDOWPLACEMENT pl;
+        ZeroMemory(&pl, sizeof(pl));
+        pl.length = sizeof(pl);
+        if (GetWindowPlacement(h, &pl))
+        {
+            pl.showCmd = SW_SHOWNOACTIVATE;
+            SetWindowPlacement(h, &pl);
+        }
+    }
+    if (!IsWindowVisible(h)) ShowWindow(h, SW_SHOWNOACTIVATE);
+}
+
 // 桌面不是一层窗口 壁纸和图标是 WorkerW 盖在 Progman 上面的 得站到这串顶上才看得见
 // 顶上再往上就是任务栏和程序了 那些不归我们管
 // 这一串都是 explorer 自己的窗口 跨进程挪层级系统不会拦 提权程序占着上面也没关系
@@ -647,46 +667,38 @@ static HWND DeskAnchor()
 static void DeskLayer(FWin* w)
 {
     if (!w || !w->hwnd || !IsWindow(w->hwnd)) return;
-    if (!IsWindowVisible(w->hwnd) || IsIconic(w->hwnd)) return;
+    // 显示桌面会把方块藏起来 而且不给你留恢复的机会 前头那句判断一挡就再没人管了
+    // 所以头一步先叫醒 叫醒了再谈站哪
+    if (IsIconic(w->hwnd) || !IsWindowVisible(w->hwnd))
+    {
+        WakeUp(w->hwnd);
+        if (!IsWindowVisible(w->hwnd)) return;
+    }
     HWND desk = DeskAnchor();
     if (!desk || !IsWindow(desk) || !IsWindowVisible(desk)) return;
 
     // 从桌面层往上数 一路全是方块的那一串就是桌面层 在串里就一下都不动
     // 这样两个方块挨着放也不会互相判错来回踢
     bool in = false;
-    HWND top = NULL;
     HWND h = GetWindow(desk, GW_HWNDPREV);
     wchar_t cn[64];
     while (h)
     {
         if (!GetClassNameW(h, cn, 64) || lstrcmpiW(cn, kCls) != 0) break;
         if (h == w->hwnd) in = true;
-        top = h;
         h = GetWindow(h, GW_HWNDPREV);
     }
     if (in) return;
 
-    HWND above = top ? top : desk;
-    SetWindowPos(w->hwnd, above, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-}
+    // 本来就贴着桌面层 不用动
+    if (GetWindow(w->hwnd, GW_HWNDNEXT) == desk) return;
 
-// 被系统最小化或者藏起来了 就把自己弄回来
-// 关键是别抢前台 显示桌面那一下最烦人来劲的窗口 用 SW_RESTORE 会把它激活 结果被系统反手再压回去 方块就一直闪到看不见
-// 换成 SW_SHOWNOACTIVATE 站回来但不吱声 桌面层该在哪还在哪
-static void WakeUp(HWND h)
-{
-    if (IsIconic(h))
-    {
-        WINDOWPLACEMENT pl;
-        ZeroMemory(&pl, sizeof(pl));
-        pl.length = sizeof(pl);
-        if (GetWindowPlacement(h, &pl))
-        {
-            pl.showCmd = SW_SHOWNOACTIVATE;
-            SetWindowPlacement(h, &pl);
-        }
-    }
-    if (!IsWindowVisible(h)) ShowWindow(h, SW_SHOWNOACTIVATE);
+    // 要站到桌面层的上面 可 SetWindowPos 只能指定"插到谁下边" 所以得拿桌面层顶上那个窗口当参照
+    // 之前拿桌面层自己或者方块当参照 等于把自己塞进桌子里 平时看着还行 一按 Win+D 系统一重排就掉到桌面底下
+    HWND above = GetWindow(desk, GW_HWNDPREV);
+    int r = SetWindowPos(w->hwnd, above ? above : HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    // 桌面层上面紧挨着的是提权程序的窗口时这句会被系统拒掉 那也总比被桌面盖住强 先顶到最上面
+    if (!r) SetWindowPos(w->hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 }
 
 static void FolderMenu(FWin* w)
@@ -773,6 +785,14 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         WINDOWPOS* p = (WINDOWPOS*)lp;
         if (!(p->flags & SWP_NOZORDER) && p->hwndInsertAfter == HWND_TOPMOST)
             p->hwndInsertAfter = HWND_NOTOPMOST;
+
+        // 显示桌面压根不给最小化那一套 它直接把窗口藏了 藏之前会先走这一趟
+        // 把隐藏标记摘掉 它要藏也藏不动 方块就一直待在桌面上 后面那次叫醒只是补个保险
+        if (p->flags & SWP_HIDEWINDOW)
+        {
+            p->flags &= ~SWP_HIDEWINDOW;
+            if (w) PostMessageW(h, WM_APP + 2, 0, 0);
+        }
         break;
     }
     case WM_WINDOWPOSCHANGED:
@@ -864,8 +884,8 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         w->homeY = y;
         // 放好位置就行 层级交给 DeskLayer
         SetWindowPos(h, NULL, x, y, w->W, w->H, SWP_NOZORDER | SWP_NOACTIVATE);
-        // 半秒看一次层级 点一下桌面把它抬起来也不会盖住方块
-        SetTimer(h, 2, 400, NULL);
+        // 两百毫秒看一眼 显示桌面把它藏了也能很快回来 平时在链上就是几句判断 不怎么耗
+        SetTimer(h, 2, 200, NULL);
 
         Render(w);
         return 0;

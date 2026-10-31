@@ -39,6 +39,12 @@ powershell -ExecutionPolicy Bypass -File build_cpp.ps1
 
 产物在 `dist\DeskFolder-v<版本>.exe`
 
+## 授权
+
+允许二次开发 也允许二次发布 改完自己打包发出去都行 不用问我
+
+只有一条 关于界面里那两个链接得留着 本仓库地址和初创者讲讲君的 B 站主页 别删别改
+
 ## 更新记录
 
 看 [CHANGELOG.md](CHANGELOG.md)
