@@ -127,19 +127,12 @@ static void DrawTile(FWin* w, float a)
     GraphicsPath p;
     RoundPath(p, r, (REAL)Px(26));
 
-    Color c1 = Hsv((float)w->d->hue, 0.5f, 0.72f, Af(a, 255));
-    Color c2 = Hsv((float)(w->d->hue + 24), 0.62f, 0.44f, Af(a, 255));
-    LinearGradientBrush lb(r, c1, c2, LinearGradientModeVertical);
-    g.FillPath(&lb, &p);
-
-    Pen pen(Color((BYTE)Af(a, 70), 255, 255, 255), 1.0f);
-    g.DrawPath(&pen, &p);
-
     Bitmap* skin = NULL;
     if (!w->d->skinPath.empty()) skin = ImageGet(w->d->skinPath, s);
+
     if (skin)
     {
-        // 铺满整个方块 圆角裁一刀 免得图片直角露出来
+        // 有自己选的图就不铺底色了 图片带透明的话直接透出桌面
         ImageAttributes ia;
         ColorMatrix cm;
         ZeroMemory(&cm, sizeof(cm));
@@ -147,12 +140,33 @@ static void DrawTile(FWin* w, float a)
         cm.m[3][3] = a;
         ia.SetColorMatrix(&cm);
         g.SetClip(&p);
-        g.DrawImage(skin, RectF((REAL)w->tx, (REAL)w->ty, (REAL)s, (REAL)s),
-            0, 0, (int)skin->GetWidth(), (int)skin->GetHeight(), UnitPixel, &ia, NULL, NULL);
+        g.DrawImage(skin, r, 0, 0, (int)skin->GetWidth(), (int)skin->GetHeight(), UnitPixel, &ia, NULL, NULL);
         g.ResetClip();
+
+        if (w->d->skinEdgeWidth > 0)
+        {
+            int ec = w->d->skinEdgeColor >= 0 ? w->d->skinEdgeColor : 0xFFFFFF;
+            float lw = (float)Px((double)w->d->skinEdgeWidth / 10.0);
+            if (lw < 1) lw = 1;
+            // 往里收半个线宽 描边就压在方块边上 不会画到外面去
+            int ins = (int)(lw * 0.5 + 0.5);
+            RectF sr((REAL)(w->tx + ins), (REAL)(w->ty + ins), (REAL)(s - ins * 2), (REAL)(s - ins * 2));
+            GraphicsPath sp;
+            RoundPath(sp, sr, (REAL)Px(26));
+            Pen pen(Shade(ec, 1.0f, Af(a, w->d->skinEdgeAlpha)), lw);
+            g.DrawPath(&pen, &sp);
+        }
     }
     else
     {
+        Color c1 = Hsv((float)w->d->hue, 0.5f, 0.72f, Af(a, 255));
+        Color c2 = Hsv((float)(w->d->hue + 24), 0.62f, 0.44f, Af(a, 255));
+        LinearGradientBrush lb(r, c1, c2, LinearGradientModeVertical);
+        g.FillPath(&lb, &p);
+
+        Pen pen(Color((BYTE)Af(a, 70), 255, 255, 255), 1.0f);
+        g.DrawPath(&pen, &p);
+
         SolidBrush wb(Color((BYTE)Af(a, 230), 255, 255, 255));
         float bx = (REAL)(w->tx + s * 0.2f);
         float bw = (REAL)(s * 0.6f);

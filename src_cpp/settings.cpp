@@ -23,11 +23,11 @@ static Bitmap* g_buf;
 
 static float g_hue, g_sat, g_val;
 static int g_alpha;
-static int g_target;    // 0 面板填充 1 面板描边
+static int g_target;    // 0 面板填充 1 面板描边 2 桌面方块描边
 static int g_edgeW;
 
 static RECT g_rClose, g_rDone, g_rPick, g_rReset;
-static RECT g_rTab0, g_rTab1;
+static RECT g_rTab0, g_rTab1, g_rTab2;
 static POINT g_wc;
 static int g_wr;
 static RECT g_rBar;
@@ -183,11 +183,28 @@ static void MakeWheel()
 
 static void PullTarget()
 {
-    int rgb = g_target == 0
-        ? (g_d->fillColor >= 0 ? g_d->fillColor : 0x1F2129)
-        : (g_d->edgeColor >= 0 ? g_d->edgeColor : 0xFFFFFF);
+    int rgb;
+    if (g_target == 0)
+    {
+        rgb = g_d->fillColor >= 0 ? g_d->fillColor : 0x1F2129;
+        g_alpha = g_d->fillAlpha;
+    }
+    else if (g_target == 1)
+    {
+        rgb = g_d->edgeColor >= 0 ? g_d->edgeColor : 0xFFFFFF;
+        g_alpha = g_d->edgeAlpha;
+    }
+    else
+    {
+        rgb = g_d->skinEdgeColor >= 0 ? g_d->skinEdgeColor : 0xFFFFFF;
+        g_alpha = g_d->skinEdgeAlpha;
+    }
     RgbHsv(rgb, g_hue, g_sat, g_val);
-    g_alpha = g_target == 0 ? g_d->fillAlpha : g_d->edgeAlpha;
+
+    int wv = g_target == 2 ? g_d->skinEdgeWidth : g_d->edgeWidth;
+    g_edgeW = (wv + 5) / 10;
+    if (g_edgeW < 0) g_edgeW = 0;
+    if (g_edgeW > 10) g_edgeW = 10;
 }
 
 static void SyncEdits()
@@ -211,13 +228,20 @@ static void PushAll()
     {
         g_d->fillColor = rgb;
         g_d->fillAlpha = g_alpha;
+        g_d->edgeWidth = g_edgeW * 10;
     }
-    else
+    else if (g_target == 1)
     {
         g_d->edgeColor = rgb;
         g_d->edgeAlpha = g_alpha;
+        g_d->edgeWidth = g_edgeW * 10;
     }
-    g_d->edgeWidth = g_edgeW * 10;
+    else
+    {
+        g_d->skinEdgeColor = rgb;
+        g_d->skinEdgeAlpha = g_alpha;
+        g_d->skinEdgeWidth = g_edgeW * 10;
+    }
     StoreSave();
     FolderReloadItems(g_d);
 }
@@ -331,7 +355,11 @@ static void ApplyPreset(int i)
     g_d->fillAlpha = 242;
     g_d->edgeColor = kPresets[i].edge;
     if (g_d->edgeAlpha < 90) g_d->edgeAlpha = 190;
-    g_d->edgeWidth = g_edgeW * 10;
+    // 方块上那张图的描边也顺手染成同一个色 整套看着才是一套
+    g_d->skinEdgeColor = kPresets[i].edge;
+    if (g_d->skinEdgeAlpha < 120) g_d->skinEdgeAlpha = 200;
+    if (g_target == 2) g_d->skinEdgeWidth = g_edgeW * 10;
+    else g_d->edgeWidth = g_edgeW * 10;
     StoreSave();
     FolderReloadItems(g_d);
     PullTarget();
@@ -372,8 +400,8 @@ static void HitTrack(POINT p)
 {
     int w = g_rTrack.right - g_rTrack.left;
     if (w < 1) return;
-    int v = 1 + (int)((float)(p.x - g_rTrack.left) / (float)w * 9.f + 0.5f);
-    if (v < 1) v = 1;
+    int v = (int)((float)(p.x - g_rTrack.left) / (float)w * 10.f + 0.5f);
+    if (v < 0) v = 0;
     if (v > 10) v = 10;
     if (v == g_edgeW) return;
     g_edgeW = v;
@@ -397,6 +425,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         g_rReset = Rc(140, 234, 130, 38);
         g_rTab0 = Rc(26, 310, 90, 34);
         g_rTab1 = Rc(126, 310, 90, 34);
+        g_rTab2 = Rc(226, 310, 90, 34);
 
         g_wc.x = Px(130);
         g_wc.y = Px(442);
@@ -441,9 +470,6 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             g_buf = new Bitmap(crc.right, crc.bottom, PixelFormat32bppPARGB);
 
         PullTarget();
-        g_edgeW = g_d->edgeWidth > 0 ? (g_d->edgeWidth + 5) / 10 : 1;
-        if (g_edgeW < 1) g_edgeW = 1;
-        if (g_edgeW > 10) g_edgeW = 10;
         MakeWheel();
         SyncEdits();
         return 0;
@@ -476,6 +502,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         if (PtInRect(&g_rReset, p)) { ResetSkin(); return 0; }
         if (PtInRect(&g_rTab0, p)) { SetTarget(0); return 0; }
         if (PtInRect(&g_rTab1, p)) { SetTarget(1); return 0; }
+        if (PtInRect(&g_rTab2, p)) { SetTarget(2); return 0; }
 
         for (int i = 0; i < 8; i++)
         {
@@ -588,7 +615,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
 
             label(L"名字", 26, 60, 0x8A8D96);
             label(L"桌面图标图片", 26, 146, 0x8A8D96);
-            label(L"展开后外观", 26, 284, 0x8A8D96);
+            label(L"外观", 26, 284, 0x8A8D96);
 
             // 输入框外框
             auto frame = [&](int x, int y, int w2, int ht)
@@ -646,9 +673,10 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             button(g_rPick, L"选择图片", false, false);
             button(g_rReset, L"恢复默认", false, false);
 
-            // 填充 描边 两个页签
+            // 填充 描边 图标 三个页签
             button(g_rTab0, L"填充", false, g_target == 0);
             button(g_rTab1, L"描边", false, g_target == 1);
+            button(g_rTab2, L"图标", false, g_target == 2);
 
             // 色轮
             if (g_wheel) g.DrawImage(g_wheel, RectF((REAL)(g_wc.x - g_wr), (REAL)(g_wc.y - g_wr), (REAL)(g_wr * 2), (REAL)(g_wr * 2)));
@@ -713,7 +741,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             StringFormat s3;
             s3.SetAlignment(StringAlignmentCenter);
             s3.SetLineAlignment(StringAlignmentCenter);
-            g.DrawString(g_target == 0 ? L"面板填充" : L"面板描边", -1, g_fSm, tr2, &s3, &tip);
+            g.DrawString(g_target == 0 ? L"面板填充" : (g_target == 1 ? L"面板描边" : L"图标描边"), -1, g_fSm, tr2, &s3, &tip);
 
             // 粗细滑条
             label(L"描边粗细", 26, 566, 0x8A8D96);
@@ -722,13 +750,14 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             RoundPath(tkb, tk, (REAL)(tk.Height / 2));
             SolidBrush tks(Col(0x3A3B42, 255));
             g.FillPath(&tks, &tkb);
-            float kx = tk.X + (float)(g_edgeW - 1) / 9.f * tk.Width;
+            float kx = tk.X + (float)g_edgeW / 10.f * tk.Width;
             SolidBrush kf(Col(0x4C6EF5, 255));
             g.FillEllipse(&kf, kx - Px(9), tk.Y + tk.Height / 2 - Px(9), (REAL)Px(18), (REAL)Px(18));
             Pen kp(Col(0xFFFFFF, 60), 1.f);
             g.DrawEllipse(&kp, kx - Px(9), tk.Y + tk.Height / 2 - Px(9), (REAL)Px(18), (REAL)Px(18));
             wchar_t wbuf[16];
-            wsprintfW(wbuf, L"%d", g_edgeW);
+            if (g_edgeW == 0) lstrcpynW(wbuf, L"关", 16);
+            else wsprintfW(wbuf, L"%d", g_edgeW);
             SolidBrush kv(Col(0xC8CAD2, 220));
             RectF kr((REAL)(g_rTrack.right + Px(16)), (REAL)(g_rTrack.top - Px(10)), (REAL)Px(60), (REAL)Px(28));
             g.DrawString(wbuf, -1, g_fLab, kr, &sf, &kv);

@@ -47,6 +47,9 @@ struct FolderData
     int edgeColor;      // 面板描边 RGB
     int edgeAlpha;      // 面板描边透明度
     int edgeWidth;      // 面板描边粗细 dip 乘 10 存的
+    int skinEdgeColor;  // 方块上那张图的描边颜色
+    int skinEdgeAlpha;
+    int skinEdgeWidth;  // 方块描边粗细 dip 乘 10 0 就是不画
     HWND hwnd;
     void* extra;    // 窗口私有数据
 };

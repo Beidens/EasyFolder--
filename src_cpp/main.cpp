@@ -14,6 +14,57 @@ static const wchar_t* kMsgCls = L"DeskFolderMsg";
 
 static void DoCreate(const wstring& name);
 
+// 开机自启动 写 HKCU 的 Run 表 状态另存一个小文件 免得反复读注册表
+static bool g_autoStart;
+
+static void AutoStartApply(bool on)
+{
+    HKEY k = NULL;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+        0, NULL, 0, KEY_SET_VALUE, NULL, &k, NULL) == ERROR_SUCCESS)
+    {
+        if (on)
+        {
+            wchar_t exe[MAX_PATH];
+            GetModuleFileNameW(NULL, exe, MAX_PATH);
+            wstring cmd = L"\"" + wstring(exe) + L"\"";
+            RegSetValueExW(k, L"DeskFolder", 0, REG_SZ, (const BYTE*)cmd.c_str(), (DWORD)((cmd.size() + 1) * sizeof(wchar_t)));
+        }
+        else RegDeleteValueW(k, L"DeskFolder");
+        RegCloseKey(k);
+    }
+    g_autoStart = on;
+
+    wstring f = g_dataDir + L"\\autostart.txt";
+    HANDLE hf = CreateFileW(f.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hf != INVALID_HANDLE_VALUE)
+    {
+        const char* s = on ? "1" : "0";
+        DWORD n2 = 0;
+        WriteFile(hf, s, 1, &n2, NULL);
+        CloseHandle(hf);
+    }
+}
+
+static void AutoStartInit()
+{
+    wstring f = g_dataDir + L"\\autostart.txt";
+    HANDLE hf = CreateFileW(f.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hf == INVALID_HANDLE_VALUE)
+    {
+        // 头一次跑 默认就给它打开
+        AutoStartApply(true);
+        return;
+    }
+    char c = 0;
+    DWORD n2 = 0;
+    ReadFile(hf, &c, 1, &n2, NULL);
+    CloseHandle(hf);
+    g_autoStart = (c == '1');
+    // 注册表里的值有可能被别的东西清掉 每次起来顺手对齐
+    AutoStartApply(g_autoStart);
+}
+
 static void InitDpi()
 {
     typedef BOOL(WINAPI * PFN_CTX)(void*);
@@ -79,6 +130,7 @@ static void TrayMenu()
     }
     else AppendMenuW(sub, MF_GRAYED | MF_STRING, 0, L"还没有文件夹");
     AppendMenuW(m, MF_POPUP, (UINT_PTR)sub, L"设置");
+    AppendMenuW(m, MF_STRING | (g_autoStart ? MF_CHECKED : MF_UNCHECKED), 5, L"开机自启动");
 
     AppendMenuW(m, MF_SEPARATOR, 0, NULL);
     AppendMenuW(m, MF_STRING, 3, L"退出");
@@ -90,6 +142,7 @@ static void TrayMenu()
     if (cmd == 1) DoCreate(L"");
     else if (cmd == 2) ShowAll();
     else if (cmd == 3) DestroyWindow(g_msgWnd);
+    else if (cmd == 5) AutoStartApply(!g_autoStart);
     else if (cmd >= 1000 && cmd - 1000 < (int)g_folders.size())
     {
         FolderData* d = g_folders[cmd - 1000];
@@ -194,6 +247,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR args, int show)
 
     g_dataDir = AppDataDir();
     StoreLoad();
+    AutoStartInit();
 
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);

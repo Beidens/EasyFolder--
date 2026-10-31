@@ -158,6 +158,9 @@ bool StoreLoad()
                     f->edgeColor = p.size() >= 10 ? atoi(p[9].c_str()) : -1;
                     f->edgeAlpha = p.size() >= 11 ? atoi(p[10].c_str()) : 42;
                     f->edgeWidth = p.size() >= 12 ? atoi(p[11].c_str()) : 10;
+                    f->skinEdgeColor = p.size() >= 13 ? atoi(p[12].c_str()) : -1;
+                    f->skinEdgeAlpha = p.size() >= 14 ? atoi(p[13].c_str()) : 70;
+                    f->skinEdgeWidth = p.size() >= 15 ? atoi(p[14].c_str()) : 10;
                     f->hwnd = NULL;
                     f->extra = NULL;
                     g_folders.push_back(f);
@@ -197,7 +200,9 @@ void StoreSave()
              + std::to_string(f->hue) + "|" + ToU8(B64Enc(f->skinPath)) + "|"
              + std::to_string(f->fillColor) + "|" + std::to_string(f->fillAlpha) + "|"
              + std::to_string(f->edgeColor) + "|" + std::to_string(f->edgeAlpha) + "|"
-             + std::to_string(f->edgeWidth) + "\r\n";
+             + std::to_string(f->edgeWidth) + "|"
+             + std::to_string(f->skinEdgeColor) + "|" + std::to_string(f->skinEdgeAlpha) + "|"
+             + std::to_string(f->skinEdgeWidth) + "\r\n";
         for (auto& it : f->items)
             out += "I|" + ToU8(f->id) + "|" + ToU8(B64Enc(it.path)) + "|"
                  + std::to_string(it.x) + "|" + std::to_string(it.y) + "\r\n";
@@ -227,6 +232,9 @@ FolderData* StoreCreate(const wstring& name, int x, int y)
     f->edgeColor = -1;
     f->edgeAlpha = 42;
     f->edgeWidth = 10;
+    f->skinEdgeColor = -1;
+    f->skinEdgeAlpha = 70;
+    f->skinEdgeWidth = 10;
     f->hwnd = NULL;
     f->extra = NULL;
     g_folders.push_back(f);
