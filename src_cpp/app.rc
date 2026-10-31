@@ -3,8 +3,8 @@
 101 ICON "app.ico"
 
 1 VERSIONINFO
-FILEVERSION     1,2,4,0
-PRODUCTVERSION  1,2,4,0
+FILEVERSION     1,2,5,0
+PRODUCTVERSION  1,2,5,0
 FILEFLAGSMASK   0x3fL
 FILEFLAGS       0x0L
 FILEOS          VOS_NT_WINDOWS32
@@ -17,11 +17,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "DeskFolder"
             VALUE "FileDescription",  "桌面图标文件夹"
-            VALUE "FileVersion",      "1.2.4.0"
+            VALUE "FileVersion",      "1.2.5.0"
             VALUE "InternalName",     "DeskFolder"
             VALUE "OriginalFilename", "DeskFolder.exe"
             VALUE "ProductName",      "DeskFolder"
-            VALUE "ProductVersion",   "1.2.4.0"
+            VALUE "ProductVersion",   "1.2.5.0"
         END
     END
     BLOCK "VarFileInfo"

@@ -615,6 +615,24 @@ static void HomeBack(FWin* w)
     SetWindowPos(w->hwnd, NULL, w->winX, w->winY, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
+// 方块只能待在桌面正上方那一格 程序窗口永远压在它上面
+// 麻烦的是桌面窗口本身是个普通窗口 点一下桌面或者显示桌面都会把它抬起来盖住方块
+// 那就一直盯着 只要方块下面挨着的不是桌面 就塞回桌面正上方
+static void DeskLayer(FWin* w)
+{
+    if (!w || !w->hwnd || !IsWindow(w->hwnd)) return;
+    if (!IsWindowVisible(w->hwnd) || IsIconic(w->hwnd)) return;
+    HWND desk = FindWindowW(L"Progman", NULL);
+    if (!desk || !IsWindow(desk) || !IsWindowVisible(desk)) return;
+    if (GetWindow(w->hwnd, GW_HWNDNEXT) == desk) return;
+
+    HWND prev = GetWindow(desk, GW_HWNDPREV);
+    if (prev == w->hwnd) return;
+    if (!prev) prev = HWND_TOP;   // 桌面上什么都没有 直接放最上面
+    // 桌面上面那个窗口 方块插在它和桌面中间 程序依然在方块上面
+    SetWindowPos(w->hwnd, prev, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+}
+
 static void FolderMenu(FWin* w)
 {
     HMENU m = CreatePopupMenu();
@@ -691,11 +709,11 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
     {
     case WM_WINDOWPOSCHANGING:
     {
-        // 这个图标要跟桌面图标一样待在最底下 任何程序都能盖住它
-        // 系统或者别的程序想把它往上提 一律摁回最底
+        // 方块是普通窗口 谁也别想把它提到置顶层去
+        // 有东西想用 HWND_TOPMOST 塞它 这里改回普通层
         WINDOWPOS* p = (WINDOWPOS*)lp;
-        if (!(p->flags & SWP_NOZORDER) && p->hwndInsertAfter != HWND_BOTTOM)
-            p->hwndInsertAfter = HWND_BOTTOM;
+        if (!(p->flags & SWP_NOZORDER) && p->hwndInsertAfter == HWND_TOPMOST)
+            p->hwndInsertAfter = HWND_NOTOPMOST;
         break;
     }
     case WM_SYSCOMMAND:
@@ -713,6 +731,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
     case WM_SHOWWINDOW:
         // 被外部藏起来了 桌面图标理应一直挂着 拉回来
         if (!wp && w) PostMessageW(h, WM_APP + 2, 0, 0);
+        else if (wp && w) DeskLayer(w);
         return 0;
     case WM_CREATE:
     {
@@ -776,13 +795,17 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         w->winY = y;
         w->homeX = x;
         w->homeY = y;
-        SetWindowPos(h, HWND_BOTTOM, x, y, w->W, w->H, SWP_NOACTIVATE);
+        // 放好位置就行 别碰层叠顺序 不然会跑到别的程序上面去
+        SetWindowPos(h, NULL, x, y, w->W, w->H, SWP_NOZORDER | SWP_NOACTIVATE);
+        // 半秒看一次层叠顺序 桌面被抬起来也不会把方块盖掉
+        SetTimer(h, 2, 400, NULL);
 
         Render(w);
         return 0;
     }
     case WM_TIMER:
         if (wp == 1) Tick(w);
+        else if (wp == 2) DeskLayer(w);
         return 0;
     case WM_PAINT:
     {
@@ -801,6 +824,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             if (IsIconic(h)) ShowWindow(h, SW_RESTORE);
             if (!IsWindowVisible(h)) ShowWindow(h, SW_SHOWNOACTIVATE);
             Render(w);
+            DeskLayer(w);
         }
         return 0;
     case WM_ACTIVATE:
@@ -1066,6 +1090,8 @@ void FolderShow(FolderData* d)
     d->hwnd = h;
     d->extra = w;
     ShowWindow(h, SW_SHOWNOACTIVATE);
+    // 刚显示出来是在普通窗口最上面 马上按回桌面正上方
+    DeskLayer(w);
 }
 
 void FolderDestroy(FolderData* d)
