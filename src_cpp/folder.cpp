@@ -31,6 +31,7 @@ struct FWin
     bool moved;
     POINT downScreen;
     int winX, winY;
+    int homeX, homeY;   // 用户自己摆的位置 展开时临时挪开 收起来要回这
     int grabX, grabY;
     int hoverItem;
     bool hoverClose;
@@ -83,6 +84,18 @@ static Color Hsv(float h, float s, float v, int alpha)
     return Color((BYTE)alpha, (BYTE)((r + m) * 255), (BYTE)((gg + m) * 255), (BYTE)((b + m) * 255));
 }
 
+// 整体明暗调一下 面板的上下两段就是靠这个拉出层次
+static Color Shade(int rgb, float k, int alpha)
+{
+    int r = (int)(((rgb >> 16) & 255) * k);
+    int gg = (int)(((rgb >> 8) & 255) * k);
+    int b = (int)((rgb & 255) * k);
+    if (r > 255) r = 255;
+    if (gg > 255) gg = 255;
+    if (b > 255) b = 255;
+    return Color((BYTE)alpha, (BYTE)r, (BYTE)gg, (BYTE)b);
+}
+
 static void RoundPath(GraphicsPath& p, RectF r, float rad)
 {
     if (rad < 1) rad = 1;
@@ -122,17 +135,36 @@ static void DrawTile(FWin* w, float a)
     Pen pen(Color((BYTE)Af(a, 70), 255, 255, 255), 1.0f);
     g.DrawPath(&pen, &p);
 
-    SolidBrush wb(Color((BYTE)Af(a, 230), 255, 255, 255));
-    float bx = (REAL)(w->tx + s * 0.2f);
-    float bw = (REAL)(s * 0.6f);
-    float by = (REAL)(w->ty + s * 0.36f);
-    float bh = (REAL)(s * 0.34f);
-    GraphicsPath tab;
-    RoundPath(tab, RectF(bx, (REAL)(by - bh * 0.22f), (REAL)(bw * 0.52f), (REAL)(bh * 0.5f)), (REAL)Px(5));
-    g.FillPath(&wb, &tab);
-    GraphicsPath body;
-    RoundPath(body, RectF(bx, by, bw, bh), (REAL)Px(7));
-    g.FillPath(&wb, &body);
+    Bitmap* skin = NULL;
+    if (!w->d->skinPath.empty()) skin = ImageGet(w->d->skinPath, s);
+    if (skin)
+    {
+        // 铺满整个方块 圆角裁一刀 免得图片直角露出来
+        ImageAttributes ia;
+        ColorMatrix cm;
+        ZeroMemory(&cm, sizeof(cm));
+        cm.m[0][0] = cm.m[1][1] = cm.m[2][2] = 1;
+        cm.m[3][3] = a;
+        ia.SetColorMatrix(&cm);
+        g.SetClip(&p);
+        g.DrawImage(skin, RectF((REAL)w->tx, (REAL)w->ty, (REAL)s, (REAL)s),
+            0, 0, (int)skin->GetWidth(), (int)skin->GetHeight(), UnitPixel, &ia, NULL, NULL);
+        g.ResetClip();
+    }
+    else
+    {
+        SolidBrush wb(Color((BYTE)Af(a, 230), 255, 255, 255));
+        float bx = (REAL)(w->tx + s * 0.2f);
+        float bw = (REAL)(s * 0.6f);
+        float by = (REAL)(w->ty + s * 0.36f);
+        float bh = (REAL)(s * 0.34f);
+        GraphicsPath tab;
+        RoundPath(tab, RectF(bx, (REAL)(by - bh * 0.22f), (REAL)(bw * 0.52f), (REAL)(bh * 0.5f)), (REAL)Px(5));
+        g.FillPath(&wb, &tab);
+        GraphicsPath body;
+        RoundPath(body, RectF(bx, by, bw, bh), (REAL)Px(7));
+        g.FillPath(&wb, &body);
+    }
 
     if (!w->d->name.empty())
     {
@@ -221,12 +253,29 @@ static void DrawPanel(FWin* w, float a)
 
     GraphicsPath bp;
     RoundPath(bp, pr, rad);
-    Color c1((BYTE)Af(a, 242), 31, 33, 41);
-    Color c2((BYTE)Af(a, 242), 18, 19, 26);
+    Color c1, c2;
+    if (w->d->fillColor >= 0)
+    {
+        int al = Af(a, w->d->fillAlpha);
+        c1 = Shade(w->d->fillColor, 1.0f, al);
+        c2 = Shade(w->d->fillColor, 0.66f, al);
+    }
+    else
+    {
+        c1 = Color((BYTE)Af(a, 242), 31, 33, 41);
+        c2 = Color((BYTE)Af(a, 242), 18, 19, 26);
+    }
     LinearGradientBrush lb(pr, c1, c2, LinearGradientModeVertical);
     g.FillPath(&lb, &bp);
-    Pen pen(Color((BYTE)Af(a, 42), 255, 255, 255), 1.0f);
-    g.DrawPath(&pen, &bp);
+
+    if (w->d->edgeWidth > 0)
+    {
+        int rgb = w->d->edgeColor >= 0 ? w->d->edgeColor : 0xFFFFFF;
+        float lw = (float)Px((double)w->d->edgeWidth / 10.0);
+        if (lw < 1) lw = 1;
+        Pen pen(Shade(rgb, 1.0f, Af(a, w->d->edgeAlpha)), lw);
+        g.DrawPath(&pen, &bp);
+    }
 
     StringFormat fmt;
     fmt.SetLineAlignment(StringAlignmentCenter);
@@ -422,8 +471,14 @@ public:
     }
 };
 
+static void KeepInWorkArea(FWin* w);
+static void HomeBack(FWin* w);
+
 static void StartAnim(FWin* w, bool expand)
 {
+    if (expand) KeepInWorkArea(w);
+    else HomeBack(w);
+
     w->expanded = expand;
     w->from = w->anim;
     w->t0 = GetTickCount64();
@@ -475,7 +530,52 @@ static void SavePos(FWin* w)
 {
     w->d->x = w->winX + w->W / 2;
     w->d->y = w->winY + w->H / 2;
+    w->homeX = w->winX;
+    w->homeY = w->winY;
     StoreSave();
+}
+
+// 图标贴边的时候点开 面板有一半在屏幕外 整块窗口挪进来 收起来再挪回去
+static void KeepInWorkArea(FWin* w)
+{
+    MONITORINFO mi;
+    ZeroMemory(&mi, sizeof(mi));
+    mi.cbSize = sizeof(mi);
+    POINT pt;
+    pt.x = w->winX + w->W / 2;
+    pt.y = w->winY + w->H / 2;
+    GetMonitorInfoW(MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST), &mi);
+    RECT a = mi.rcWork;
+
+    int x = w->winX;
+    int y = w->winY;
+    int aw = a.right - a.left;
+    int ah = a.bottom - a.top;
+    if (w->W >= aw) x = a.left;
+    else
+    {
+        if (x < a.left) x = a.left;
+        if (x + w->W > a.right) x = a.right - w->W;
+    }
+    if (w->H >= ah) y = a.top;
+    else
+    {
+        if (y < a.top) y = a.top;
+        if (y + w->H > a.bottom) y = a.bottom - w->H;
+    }
+    if (x == w->winX && y == w->winY) return;
+
+    w->winX = x;
+    w->winY = y;
+    SetWindowPos(w->hwnd, NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+static void HomeBack(FWin* w)
+{
+    if (w->winX == w->homeX && w->winY == w->homeY) return;
+    w->winX = w->homeX;
+    w->winY = w->homeY;
+    SetWindowPos(w->hwnd, NULL, w->winX, w->winY, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 static void FolderMenu(FWin* w)
@@ -483,6 +583,7 @@ static void FolderMenu(FWin* w)
     HMENU m = CreatePopupMenu();
     AppendMenuW(m, MF_STRING, 1, L"打开");
     AppendMenuW(m, MF_STRING, 2, L"重命名");
+    AppendMenuW(m, MF_STRING, 4, L"设置");
     AppendMenuW(m, MF_STRING, 3, L"删除文件夹");
     POINT p;
     GetCursorPos(&p);
@@ -503,6 +604,12 @@ static void FolderMenu(FWin* w)
             StoreSave();
             Render(w);
         }
+    }
+    else if (cmd == 4)
+    {
+        // 设置窗口是模态的 关掉之后把改了的东西重画一遍
+        PanelSettingsOpen(w->d);
+        Render(w);
     }
     else if (cmd == 3)
     {
@@ -602,6 +709,8 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         if (y > a.bottom - w->H) y = a.bottom - w->H;
         w->winX = x;
         w->winY = y;
+        w->homeX = x;
+        w->homeY = y;
         SetWindowPos(h, NULL, x, y, w->W, w->H, SWP_NOZORDER | SWP_NOACTIVATE);
 
         Render(w);

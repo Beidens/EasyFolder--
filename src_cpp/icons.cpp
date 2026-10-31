@@ -3,6 +3,7 @@
 #include <shlwapi.h>
 
 static std::map<wstring, Gdiplus::Bitmap*> g_cache;
+static std::map<wstring, Gdiplus::Bitmap*> g_imgCache;
 
 // 把 shell 给的 HBITMAP 转成 GDI+ 的预乘位图 顺手处理 alpha 顺序问题
 static Gdiplus::Bitmap* FromHBitmap(HBITMAP hbm)
@@ -129,10 +130,51 @@ Gdiplus::Bitmap* IconGet(const wstring& path, int size)
     return bmp;
 }
 
+// 设置里挑的图片 直接按文件读 不经过 shell 缩略图 免得 png 给回一个图片查看器的图标
+Gdiplus::Bitmap* ImageGet(const wstring& path, int size)
+{
+    if (path.empty() || size < 1) return NULL;
+    wchar_t k[32];
+    wsprintfW(k, L"|%d", size);
+    wstring key = path + k;
+    auto it = g_imgCache.find(key);
+    if (it != g_imgCache.end()) return it->second;
+
+    Gdiplus::Bitmap* out = NULL;
+    Gdiplus::Image* src = Gdiplus::Image::FromFile(path.c_str());
+    if (src && src->GetLastStatus() == Gdiplus::Ok)
+    {
+        Gdiplus::REAL sw = (Gdiplus::REAL)src->GetWidth();
+        Gdiplus::REAL sh = (Gdiplus::REAL)src->GetHeight();
+        if (sw > 0 && sh > 0)
+        {
+            out = new Gdiplus::Bitmap(size, size, PixelFormat32bppPARGB);
+            if (out)
+            {
+                Gdiplus::Graphics g(out);
+                g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+                g.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
+                g.Clear(Gdiplus::Color(0, 0, 0, 0));
+                Gdiplus::REAL s = sw > sh ? sw : sh;
+                Gdiplus::REAL k2 = (Gdiplus::REAL)size / s;
+                Gdiplus::REAL dw = sw * k2;
+                Gdiplus::REAL dh = sh * k2;
+                g.DrawImage(src, Gdiplus::RectF(((Gdiplus::REAL)size - dw) / 2, ((Gdiplus::REAL)size - dh) / 2, dw, dh),
+                    0, 0, sw, sh, Gdiplus::UnitPixel);
+            }
+        }
+    }
+    if (src) delete src;
+    g_imgCache[key] = out;
+    return out;
+}
+
 void IconsClear()
 {
     for (auto& kv : g_cache) delete kv.second;
     g_cache.clear();
+    for (auto& kv : g_imgCache) delete kv.second;
+    g_imgCache.clear();
 }
 
 void LaunchPath(const wstring& path)

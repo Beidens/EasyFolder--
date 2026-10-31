@@ -40,6 +40,13 @@ struct FolderData
     int y;
     int hue;
     vector<FolderEntry> items;
+    // 外观 这堆 -1 表示还没设置过 走原来的默认值
+    wstring skinPath;   // 桌面方块上铺的图片 空就是默认那个白文件夹
+    int fillColor;      // 面板底色 RGB
+    int fillAlpha;      // 面板底色透明度
+    int edgeColor;      // 面板描边 RGB
+    int edgeAlpha;      // 面板描边透明度
+    int edgeWidth;      // 面板描边粗细 dip 乘 10 存的
     HWND hwnd;
     void* extra;    // 窗口私有数据
 };
@@ -82,6 +89,7 @@ bool StoreAddItem(FolderData* f, const wstring& path);
 void StoreRemoveItem(FolderData* f, int index);
 
 Gdiplus::Bitmap* IconGet(const wstring& path, int size);
+Gdiplus::Bitmap* ImageGet(const wstring& path, int size);
 void IconsClear();
 void LaunchPath(const wstring& path);
 
@@ -91,3 +99,4 @@ void FolderShow(FolderData* d);
 void FolderDestroy(FolderData* d);
 void FolderReloadItems(FolderData* d);
 void AppCreateFolder();
+void PanelSettingsOpen(FolderData* d);

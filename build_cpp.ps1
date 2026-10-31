@@ -57,7 +57,7 @@ if ($src.Count -eq 0) { throw 'no cpp files' }
 $gargs = @('-std=c++17', '-O2', '-municode', '-mwindows', '-Wall', '-Wextra', '-o', $tmp)
 $gargs += $src
 if (Test-Path $res) { $gargs += $res }
-$gargs += @('-lgdiplus', '-lole32', '-luuid', '-lshlwapi', '-lcomctl32', '-ladvapi32', '-luser32', '-lgdi32', '-lshell32', '-static')
+$gargs += @('-lgdiplus', '-lole32', '-luuid', '-lshlwapi', '-lcomctl32', '-ladvapi32', '-lcomdlg32', '-luser32', '-lgdi32', '-lshell32', '-static')
 
 & $gpp @gargs
 $code = $LASTEXITCODE

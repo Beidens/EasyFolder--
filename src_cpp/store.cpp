@@ -151,6 +151,13 @@ bool StoreLoad()
                     f->x = atoi(p[3].c_str());
                     f->y = atoi(p[4].c_str());
                     f->hue = atoi(p[5].c_str());
+                    // 外观是从 1.2.0 才开始有的 老文件到 hue 就没了
+                    f->skinPath = p.size() >= 7 ? B64Dec(FromU8(p[6])) : wstring();
+                    f->fillColor = p.size() >= 8 ? atoi(p[7].c_str()) : -1;
+                    f->fillAlpha = p.size() >= 9 ? atoi(p[8].c_str()) : 242;
+                    f->edgeColor = p.size() >= 10 ? atoi(p[9].c_str()) : -1;
+                    f->edgeAlpha = p.size() >= 11 ? atoi(p[10].c_str()) : 42;
+                    f->edgeWidth = p.size() >= 12 ? atoi(p[11].c_str()) : 10;
                     f->hwnd = NULL;
                     f->extra = NULL;
                     g_folders.push_back(f);
@@ -187,7 +194,10 @@ void StoreSave()
     {
         out += "F|" + ToU8(f->id) + "|" + ToU8(B64Enc(f->name)) + "|"
              + std::to_string(f->x) + "|" + std::to_string(f->y) + "|"
-             + std::to_string(f->hue) + "\r\n";
+             + std::to_string(f->hue) + "|" + ToU8(B64Enc(f->skinPath)) + "|"
+             + std::to_string(f->fillColor) + "|" + std::to_string(f->fillAlpha) + "|"
+             + std::to_string(f->edgeColor) + "|" + std::to_string(f->edgeAlpha) + "|"
+             + std::to_string(f->edgeWidth) + "\r\n";
         for (auto& it : f->items)
             out += "I|" + ToU8(f->id) + "|" + ToU8(B64Enc(it.path)) + "|"
                  + std::to_string(it.x) + "|" + std::to_string(it.y) + "\r\n";
@@ -212,6 +222,11 @@ FolderData* StoreCreate(const wstring& name, int x, int y)
     f->x = x;
     f->y = y;
     f->hue = hues[g_folders.size() % 8];
+    f->fillColor = -1;
+    f->fillAlpha = 242;
+    f->edgeColor = -1;
+    f->edgeAlpha = 42;
+    f->edgeWidth = 10;
     f->hwnd = NULL;
     f->extra = NULL;
     g_folders.push_back(f);

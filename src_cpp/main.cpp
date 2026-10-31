@@ -64,6 +64,22 @@ static void TrayMenu()
     HMENU m = CreatePopupMenu();
     AppendMenuW(m, MF_STRING, 1, L"新建图标文件夹");
     AppendMenuW(m, MF_STRING, 2, L"显示全部");
+
+    // 设置挂二级菜单 有几个文件夹就列几个
+    HMENU sub = CreatePopupMenu();
+    int n = (int)g_folders.size();
+    if (n > 0)
+    {
+        for (int i = 0; i < n; i++)
+        {
+            wstring t = g_folders[i]->name;
+            if (t.empty()) t = L"未命名";
+            AppendMenuW(sub, MF_STRING, 1000 + i, t.c_str());
+        }
+    }
+    else AppendMenuW(sub, MF_GRAYED | MF_STRING, 0, L"还没有文件夹");
+    AppendMenuW(m, MF_POPUP, (UINT_PTR)sub, L"设置");
+
     AppendMenuW(m, MF_SEPARATOR, 0, NULL);
     AppendMenuW(m, MF_STRING, 3, L"退出");
     POINT p;
@@ -74,6 +90,12 @@ static void TrayMenu()
     if (cmd == 1) DoCreate(L"");
     else if (cmd == 2) ShowAll();
     else if (cmd == 3) DestroyWindow(g_msgWnd);
+    else if (cmd >= 1000 && cmd - 1000 < (int)g_folders.size())
+    {
+        FolderData* d = g_folders[cmd - 1000];
+        FolderShow(d);
+        PanelSettingsOpen(d);
+    }
 }
 
 static void RegisterShell()
