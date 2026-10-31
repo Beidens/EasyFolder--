@@ -691,10 +691,11 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
     {
     case WM_WINDOWPOSCHANGING:
     {
-        // 桌面图标是挂在普通窗口层次里的东西 谁想把它提到最上面就改回去
+        // 这个图标要跟桌面图标一样待在最底下 任何程序都能盖住它
+        // 系统或者别的程序想把它往上提 一律摁回最底
         WINDOWPOS* p = (WINDOWPOS*)lp;
-        if (!(p->flags & SWP_NOZORDER) && p->hwndInsertAfter == HWND_TOPMOST)
-            p->hwndInsertAfter = HWND_NOTOPMOST;
+        if (!(p->flags & SWP_NOZORDER) && p->hwndInsertAfter != HWND_BOTTOM)
+            p->hwndInsertAfter = HWND_BOTTOM;
         break;
     }
     case WM_SYSCOMMAND:
@@ -775,7 +776,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         w->winY = y;
         w->homeX = x;
         w->homeY = y;
-        SetWindowPos(h, NULL, x, y, w->W, w->H, SWP_NOZORDER | SWP_NOACTIVATE);
+        SetWindowPos(h, HWND_BOTTOM, x, y, w->W, w->H, SWP_NOACTIVATE);
 
         Render(w);
         return 0;
