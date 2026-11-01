@@ -58,6 +58,7 @@ struct FWin
     int grabX, grabY;
     int hoverItem;
     bool hoverClose;
+    int scroll;         // 面板内容往上卷了多少 单位像素
     bool menuOpen;
     int itemIdx;        // 正被按住的那个格子 -1 就是没有
     bool itemDrag;
@@ -67,6 +68,41 @@ struct FWin
     ULONGLONG t0;
     ULONGLONG lastToggle;
 };
+
+// 面板里放格子那一块有多高 单位像素
+static int ViewH(FWin* w)
+{
+    return Px(GRID_ROWS * CellDip(w->d));
+}
+
+// 内容一直伸到多深 有格子摆到很下面就算到那
+// 没超出可视区就不用卷 滚动条也不画
+static int ContentH(FWin* w)
+{
+    int cell = Px(CellDip(w->d));
+    int b = ViewH(w);
+    for (int i = 0; i < (int)w->d->items.size(); i++)
+    {
+        int y = Px(w->d->items[i].y) + cell;
+        if (y > b) b = y;
+    }
+    return b;
+}
+
+// 往下最多摆到哪 留够余量就行 免得手一直按在底边内容没完没了地长
+static int MaxItemY(FWin* w)
+{
+    int cell = CellDip(w->d);
+    return GRID_ROWS * cell * 8 - cell;
+}
+
+static void ClampScroll(FWin* w)
+{
+    int mx = ContentH(w) - ViewH(w);
+    if (mx < 0) mx = 0;
+    if (w->scroll > mx) w->scroll = mx;
+    if (w->scroll < 0) w->scroll = 0;
+}
 
 static Font* FTitle()
 {
@@ -227,8 +263,9 @@ static void DrawCell(FWin* w, int i, float a)
     int cw = Px(CellDip(w->d));
     int isz = Px(ItemDip(w->d));
     float ix = (REAL)(w->px + Px(24) + Px(it.x));
-    float iy = (REAL)(w->py + Px(50) + Px(24) + Px(it.y));
-    float t = (a - 0.22f - i * 0.025f) / 0.3f;
+    float iy = (REAL)(w->py + Px(50) + Px(24) + Px(it.y) - w->scroll);
+    // 格子多了之后出场那个错开不能一直往后排 不然靠后的永远等不到出场
+    float t = (a - 0.22f - (i < 12 ? i : 12) * 0.025f) / 0.3f;
     if (t < 0) t = 0;
     if (t > 1) t = 1;
     if (t <= 0) return;
@@ -270,6 +307,30 @@ static void DrawCell(FWin* w, int i, float a)
     RectF lr(ix + 2, iy + Px(8) + isz + Px(6) + off, (REAL)(cw - 4), (REAL)Px(28));
     SolidBrush tb(Color((BYTE)Af(t * a, 236), 238, 240, 246));
     g.DrawString(ItemLabel(it.path).c_str(), -1, FItem(), lr, &f2, &tb);
+}
+
+// 内容多过一屏就在右边画根细条 一眼能看出下面还压着东西
+static void DrawBar(FWin* w, float a)
+{
+    int maxs = ContentH(w) - ViewH(w);
+    if (maxs <= 0) return;
+    Graphics& g = *w->g;
+    float vh = (float)ViewH(w);
+    float th = vh * vh / (float)(vh + maxs);
+    if (th < (float)Px(34)) th = (float)Px(34);
+    float bx = (float)(w->px + w->pw - Px(15));
+    float top = (float)(w->py + Px(50) + Px(24));
+    float by = top + (vh - th) * ((float)w->scroll / (float)maxs);
+
+    SolidBrush tb(Color((BYTE)Af(a, 36), 255, 255, 255));
+    GraphicsPath tp;
+    RoundPath(tp, RectF(bx, top, (REAL)Px(4), (REAL)vh), (REAL)Px(2));
+    g.FillPath(&tb, &tp);
+
+    SolidBrush bb(Color((BYTE)Af(a, 130), 255, 255, 255));
+    GraphicsPath bp;
+    RoundPath(bp, RectF(bx, by, (REAL)Px(4), (REAL)th), (REAL)Px(2));
+    g.FillPath(&bb, &bp);
 }
 
 static void DrawPanel(FWin* w, float a)
@@ -340,16 +401,23 @@ static void DrawPanel(FWin* w, float a)
     g.DrawLine(&sep, (REAL)(w->px + Px(24)), (REAL)(w->py + Px(50)), (REAL)(w->px + w->pw - Px(24)), (REAL)(w->py + Px(50)));
 
     int n = (int)w->d->items.size();
-    if (n > GRID_COLS * GRID_ROWS) n = GRID_COLS * GRID_ROWS;
+    // 格子在面板框里画 卷到框外的那截让裁剪挡掉 不然会爬到标题栏上
+    RectF clip((REAL)(w->px + Px(24)), (REAL)(w->py + Px(50) + Px(24)),
+               (REAL)Px(GRID_COLS * CellDip(w->d)), (REAL)ViewH(w));
+    g.SetClip(clip);
     for (int i = 0; i < n; i++)
         if (i != w->itemIdx) DrawCell(w, i, a);
     // 手上拖着的那个最后画 保证压在最上层
     if (w->itemIdx >= 0 && w->itemIdx < n) DrawCell(w, w->itemIdx, a);
+    g.ResetClip();
+
+    DrawBar(w, a);
 }
 
 static void Render(FWin* w)
 {
     if (!w->g) return;
+    ClampScroll(w);
     Graphics& g = *w->g;
     g.ResetTransform();
     g.Clear(Color(0, 0, 0, 0));
@@ -402,12 +470,12 @@ static void Render(FWin* w)
 static int AddDrop(FWin* w, HDROP drop)
 {
     int n = (int)DragQueryFileW(drop, 0xFFFFFFFF, NULL, 0);
-    int room = GRID_COLS * GRID_ROWS - (int)w->d->items.size();
-    for (int i = 0; i < n && room > 0; i++)
+    // 装多少都行 一屏放不下就往下卷
+    for (int i = 0; i < n; i++)
     {
         wchar_t path[MAX_PATH * 4];
         if (DragQueryFileW(drop, (UINT)i, path, MAX_PATH * 4))
-            if (StoreAddItem(w->d, path)) room--;
+            StoreAddItem(w->d, path);
     }
     Render(w);
     return n;
@@ -512,7 +580,12 @@ static void MoveWin(FWin* w, int x, int y);
 
 static void StartAnim(FWin* w, bool expand)
 {
-    if (expand) KeepInWorkArea(w);
+    // 打开的时候从头看 上次卷到哪了不管
+    if (expand)
+    {
+        KeepInWorkArea(w);
+        w->scroll = 0;
+    }
     else HomeBack(w);
 
     w->expanded = expand;
@@ -539,13 +612,18 @@ static void Tick(FWin* w)
 static int HitItem(FWin* w, POINT p)
 {
     if (w->anim < 0.99f) return -1;
+    // 先看这个点是不是落在框里 卷到框外的格子点不到
+    int left = w->px + Px(24);
+    int top = w->py + Px(50) + Px(24);
     int cw = Px(CellDip(w->d));
+    if (p.x < left || p.x >= left + Px(GRID_COLS * CellDip(w->d))) return -1;
+    if (p.y < top || p.y >= top + ViewH(w)) return -1;
     int n = (int)w->d->items.size();
     // 从后往前找 后画的在上面 点到叠在一起的地方应该拿上面那个
     for (int i = n - 1; i >= 0; i--)
     {
-        int x = w->px + Px(24) + Px(w->d->items[i].x);
-        int y = w->py + Px(50) + Px(24) + Px(w->d->items[i].y);
+        int x = left + Px(w->d->items[i].x);
+        int y = top + Px(w->d->items[i].y) - w->scroll;
         if (p.x >= x && p.x < x + cw && p.y >= y && p.y < y + cw) return i;
     }
     return -1;
@@ -557,6 +635,51 @@ static bool HitClose(FWin* w, POINT p)
     int x = w->px + w->pw - Px(22) - Px(28);
     int y = w->py + Px(11);
     return p.x >= x && p.x < x + Px(28) && p.y >= y && p.y < y + Px(28);
+}
+
+// 手上的格子不能被拖出框 卷一下让它始终留在眼前
+static void DragFollow(FWin* w)
+{
+    if (w->itemIdx < 0 || w->itemIdx >= (int)w->d->items.size()) return;
+    int top = Px(w->d->items[w->itemIdx].y);
+    int cell = Px(CellDip(w->d));
+    int vh = ViewH(w);
+    if (top - w->scroll < 0) w->scroll = top;
+    else if (top + cell - w->scroll > vh) w->scroll = top + cell - vh;
+    ClampScroll(w);
+}
+
+// 拖到上下两头 手停着不动也要一直翻
+// 定时器三十毫秒挪一点 顺着方向把格子和卷动一起走 看着就像在拖
+static void DragScroll(FWin* w)
+{
+    if (!w->itemDrag || w->itemIdx < 0 || w->itemIdx >= (int)w->d->items.size())
+    {
+        KillTimer(w->hwnd, 3);
+        return;
+    }
+    POINT c;
+    GetCursorPos(&c);
+    ScreenToClient(w->hwnd, &c);
+    int top = w->py + Px(50) + Px(24);
+    int vh = ViewH(w);
+    int edge = Px(46);
+    int step = Px(16);
+    int dir = 0;
+    if (c.y < top + edge) dir = -1;
+    else if (c.y > top + vh - edge) dir = 1;
+    if (dir == 0) return;
+
+    int dipStep = (int)(Dip(step) + 0.5);
+    if (dipStep < 1) dipStep = 1;
+    FolderEntry& it = w->d->items[w->itemIdx];
+    if (dir > 0) it.y += dipStep;
+    else if (it.y > 0) it.y -= dipStep;
+    else return;
+    if (it.y < 0) it.y = 0;
+    if (it.y > MaxItemY(w)) it.y = MaxItemY(w);
+    DragFollow(w);
+    Render(w);
 }
 
 static void FolderMenu(FWin* w);
@@ -893,6 +1016,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
     case WM_TIMER:
         if (wp == 1) Tick(w);
         else if (wp == 2) DeskLayer(w);
+        else if (wp == 3) DragScroll(w);
         return 0;
     case WM_PAINT:
     {
@@ -917,6 +1041,9 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         if (LOWORD(wp) == WA_INACTIVE && w->expanded && !w->menuOpen)
             StartAnim(w, false);
         return 0;
+    case WM_MOUSEACTIVATE:
+        // 点进来就把焦点拿过去 不然滚轮全被上一个窗口吃掉了 面板翻不动
+        return MA_ACTIVATE;
     case WM_LBUTTONDOWN:
     {
         // 动画还在跑的时候先不接鼠标 免得拖一半又弹回去
@@ -938,7 +1065,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
                 w->itemDrag = false;
                 w->itemDown = c;
                 w->itemGrabX = c.x - (w->winX + w->px + Px(24) + Px(w->d->items[idx].x));
-                w->itemGrabY = c.y - (w->winY + w->py + Px(50) + Px(24) + Px(w->d->items[idx].y));
+                w->itemGrabY = c.y - (w->winY + w->py + Px(50) + Px(24) + Px(w->d->items[idx].y) - w->scroll);
                 SetCapture(h);
                 return 0;
             }
@@ -966,27 +1093,32 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
                 int ddy = c.y - w->itemDown.y;
                 if (ddx < 0) ddx = -ddx;
                 if (ddy < 0) ddy = -ddy;
-                if (ddx + ddy > Px(6)) w->itemDrag = true;
+                if (ddx + ddy > Px(6))
+                {
+                    w->itemDrag = true;
+                    SetTimer(w->hwnd, 3, 30, NULL);
+                }
             }
             if (w->itemDrag && w->itemIdx < (int)w->d->items.size())
             {
                 FolderEntry& it = w->d->items[w->itemIdx];
                 int bx = c.x - w->itemGrabX - (w->winX + w->px + Px(24));
-                int by = c.y - w->itemGrabY - (w->winY + w->py + Px(50) + Px(24));
+                int by = c.y - w->itemGrabY - (w->winY + w->py + Px(50) + Px(24)) + w->scroll;
                 int nx = (int)(Dip(bx) + 0.5);
                 int ny = (int)(Dip(by) + 0.5);
-                // 别让格子被拖出面板 拖出去就看不见了
+                // 左右还是只能在面板里 上下能一直往下摆 卷起来的那截也算地方
                 int cell = CellDip(w->d);
                 int mx = GRID_COLS * cell - cell;
-                int my = GRID_ROWS * cell - cell;
+                int my = MaxItemY(w);
                 if (nx < 0) nx = 0;
                 if (ny < 0) ny = 0;
-                if (nx > mx) nx = mx;
                 if (ny > my) ny = my;
+                if (nx > mx) nx = mx;
                 if (nx != it.x || ny != it.y)
                 {
                     it.x = nx;
                     it.y = ny;
+                    DragFollow(w);
                     Render(w);
                 }
             }
@@ -1046,6 +1178,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         {
             int idx = w->itemIdx;
             bool moved = w->itemDrag;
+            KillTimer(h, 3);
             w->itemIdx = -1;
             w->itemDrag = false;
             if (GetCapture() == h) ReleaseCapture();
@@ -1096,6 +1229,18 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         }
         if (w->anim > 0.01f) return 0;
         FolderMenu(w);
+        return 0;
+    }
+    case WM_MOUSEWHEEL:
+    {
+        // 面板打开着才管滚轮 收起来的时候留给桌面
+        if (w->anim < 0.99f) return 0;
+        int z = GET_WHEEL_DELTA_WPARAM(wp);
+        int step = Px(CellDip(w->d)) / 2;
+        if (step < Px(24)) step = Px(24);
+        w->scroll -= (z / 120) * step;
+        ClampScroll(w);
+        Render(w);
         return 0;
     }
     case WM_KEYDOWN:

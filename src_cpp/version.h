@@ -1,5 +1,5 @@
 #pragma once
 #define APP_VER_MAJOR 1
-#define APP_VER_MINOR 2
-#define APP_VER_PATCH 9
-#define APP_VER_STR L"1.2.9"
+#define APP_VER_MINOR 3
+#define APP_VER_PATCH 0
+#define APP_VER_STR L"1.3.0"
