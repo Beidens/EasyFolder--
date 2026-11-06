@@ -58,6 +58,7 @@ struct FWin
     int grabX, grabY;
     int hoverItem;
     bool hoverClose;
+    bool hoverPin;
     int scroll;         // 面板内容往上卷了多少 单位像素
     bool menuOpen;
     int itemIdx;        // 正被按住的那个格子 -1 就是没有
@@ -397,6 +398,27 @@ static void DrawPanel(FWin* w, float a)
     g.DrawLine(&xp, cx + cs * 0.32f, cy + cs * 0.32f, cx + cs * 0.68f, cy + cs * 0.68f);
     g.DrawLine(&xp, cx + cs * 0.68f, cy + cs * 0.32f, cx + cs * 0.32f, cy + cs * 0.68f);
 
+    // 叉号左边那颗钉子 钉上就实心 没钉就是空心的
+    float pinX = (REAL)(w->px + w->pw - Px(22) - Px(28) - Px(32));
+    float pinY = (REAL)(w->py + Px(11));
+    if (w->hoverPin)
+    {
+        SolidBrush hb(Color((BYTE)Af(a, 30), 255, 255, 255));
+        GraphicsPath hp;
+        RoundPath(hp, RectF(pinX, pinY, cs, cs), (REAL)Px(8));
+        g.FillPath(&hb, &hp);
+    }
+    bool pinOn = w->d->pinned != 0;
+    Pen pp(Color((BYTE)Af(a, pinOn ? 235 : 120), 214, 216, 224), 1.4f);
+    g.DrawEllipse(&pp, pinX + cs * 0.27f, pinY + cs * 0.17f, cs * 0.46f, cs * 0.46f);
+    if (pinOn)
+    {
+        SolidBrush pb(Color((BYTE)Af(a, 235), 214, 216, 224));
+        g.FillEllipse(&pb, pinX + cs * 0.27f, pinY + cs * 0.17f, cs * 0.46f, cs * 0.46f);
+    }
+    g.DrawLine(&pp, pinX + cs * 0.36f, pinY + cs * 0.56f, pinX + cs * 0.64f, pinY + cs * 0.56f);
+    g.DrawLine(&pp, pinX + cs * 0.5f, pinY + cs * 0.56f, pinX + cs * 0.5f, pinY + cs * 0.84f);
+
     Pen sep(Color((BYTE)Af(a, 26), 255, 255, 255), 1.0f);
     g.DrawLine(&sep, (REAL)(w->px + Px(24)), (REAL)(w->py + Px(50)), (REAL)(w->px + w->pw - Px(24)), (REAL)(w->py + Px(50)));
 
@@ -637,6 +659,15 @@ static bool HitClose(FWin* w, POINT p)
     return p.x >= x && p.x < x + Px(28) && p.y >= y && p.y < y + Px(28);
 }
 
+// 钉子就在叉号左边那一格
+static bool HitPin(FWin* w, POINT p)
+{
+    if (w->anim < 0.99f) return false;
+    int x = w->px + w->pw - Px(22) - Px(28) - Px(32);
+    int y = w->py + Px(11);
+    return p.x >= x && p.x < x + Px(28) && p.y >= y && p.y < y + Px(28);
+}
+
 // 手上的格子不能被拖出框 卷一下让它始终留在眼前
 static void DragFollow(FWin* w)
 {
@@ -687,10 +718,10 @@ static void ItemMenu(FWin* w, int index);
 
 static void SavePos(FWin* w)
 {
-    w->d->x = w->winX + w->W / 2;
-    w->d->y = w->winY + w->H / 2;
-    w->homeX = w->winX;
-    w->homeY = w->winY;
+    // 存自己摆的那个位置 别存展开时临时挪过去那一下
+    // 拿展开时的位置写盘 下次开机会跑到面板挪过去的那里 看着就是每次重启都偏一点
+    w->d->x = w->homeX + w->W / 2;
+    w->d->y = w->homeY + w->H / 2;
     StoreSave();
 }
 
@@ -1054,7 +1085,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             POINT p;
             p.x = GET_X_LPARAM(lp);
             p.y = GET_Y_LPARAM(lp);
-            if (HitClose(w, p)) return 0;
+            if (HitClose(w, p) || HitPin(w, p)) return 0;
             int idx = HitItem(w, p);
             if (idx >= 0)
             {
@@ -1070,6 +1101,8 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
                 return 0;
             }
         }
+        // 钉住了就别拖了 收起来展开都一样
+        if (w->d->pinned) return 0;
         w->pressed = true;
         w->dragging = false;
         GetCursorPos(&w->downScreen);
@@ -1087,6 +1120,8 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         {
             POINT c;
             GetCursorPos(&c);
+            // 手动了也没用 钉住的时候格子不动
+            // 标记一下算拖过 松手就不会顺手把图标打开
             if (!w->itemDrag)
             {
                 int ddx = c.x - w->itemDown.x;
@@ -1096,10 +1131,10 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
                 if (ddx + ddy > Px(6))
                 {
                     w->itemDrag = true;
-                    SetTimer(w->hwnd, 3, 30, NULL);
+                    if (!w->d->pinned) SetTimer(w->hwnd, 3, 30, NULL);
                 }
             }
-            if (w->itemDrag && w->itemIdx < (int)w->d->items.size())
+            if (w->itemDrag && !w->d->pinned && w->itemIdx < (int)w->d->items.size())
             {
                 FolderEntry& it = w->d->items[w->itemIdx];
                 int bx = c.x - w->itemGrabX - (w->winX + w->px + Px(24));
@@ -1154,6 +1189,9 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
 
             w->winX = x;
             w->winY = y;
+            // 拖到哪就定在哪 以后收起来回的也是这 不然后面一收一开又跳回去
+            w->homeX = x;
+            w->homeY = y;
             // 分层窗口的内容由 UpdateLayeredWindow 一起搬 光调 SetWindowPos 会只动壳子
             MoveWin(w, w->winX, w->winY);
             Render(w);
@@ -1163,10 +1201,12 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         {
             int idx = HitItem(w, p);
             bool hc = HitClose(w, p);
-            if (idx != w->hoverItem || hc != w->hoverClose)
+            bool hp = HitPin(w, p);
+            if (idx != w->hoverItem || hc != w->hoverClose || hp != w->hoverPin)
             {
                 w->hoverItem = idx;
                 w->hoverClose = hc;
+                w->hoverPin = hp;
                 Render(w);
             }
         }
@@ -1205,6 +1245,13 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             w->lastToggle = now;
             SetForegroundWindow(h);
             StartAnim(w, true);
+            return 0;
+        }
+        if (HitPin(w, p))
+        {
+            w->d->pinned = w->d->pinned ? 0 : 1;
+            StoreSave();
+            Render(w);
             return 0;
         }
         if (HitClose(w, p))
@@ -1337,8 +1384,8 @@ void FolderApplyLook(FolderData* d)
     // 尺寸改过之后窗口本身也得换大小 直接按原来的中心点重建最省事
     if (w)
     {
-        d->x = w->winX + w->W / 2;
-        d->y = w->winY + w->H / 2;
+        d->x = w->homeX + w->W / 2;
+        d->y = w->homeY + w->H / 2;
     }
     FolderDestroy(d);
     FolderShow(d);

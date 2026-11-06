@@ -52,6 +52,7 @@ struct FolderData
     int skinEdgeWidth;  // 方块描边粗细 dip 乘 10 0 就是不画
     int tileSize;       // 桌面方块多大 单位 dip
     int itemSize;       // 展开之后里面图标多大 单位 dip
+    int pinned;         // 钉住了就拖不动 0 不钉 1 钉
     HWND hwnd;
     void* extra;    // 窗口私有数据
 };

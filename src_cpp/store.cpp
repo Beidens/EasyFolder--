@@ -163,6 +163,7 @@ bool StoreLoad()
                     f->skinEdgeWidth = p.size() >= 15 ? atoi(p[14].c_str()) : 10;
                     f->tileSize = p.size() >= 16 ? atoi(p[15].c_str()) : -1;
                     f->itemSize = p.size() >= 17 ? atoi(p[16].c_str()) : -1;
+                    f->pinned = p.size() >= 18 ? atoi(p[17].c_str()) : 0;
                     f->hwnd = NULL;
                     f->extra = NULL;
                     g_folders.push_back(f);
@@ -205,7 +206,8 @@ void StoreSave()
              + std::to_string(f->edgeWidth) + "|"
              + std::to_string(f->skinEdgeColor) + "|" + std::to_string(f->skinEdgeAlpha) + "|"
              + std::to_string(f->skinEdgeWidth) + "|"
-             + std::to_string(f->tileSize) + "|" + std::to_string(f->itemSize) + "\r\n";
+             + std::to_string(f->tileSize) + "|" + std::to_string(f->itemSize) + "|"
+             + std::to_string(f->pinned) + "\r\n";
         for (auto& it : f->items)
             out += "I|" + ToU8(f->id) + "|" + ToU8(B64Enc(it.path)) + "|"
                  + std::to_string(it.x) + "|" + std::to_string(it.y) + "\r\n";
@@ -238,6 +240,7 @@ FolderData* StoreCreate(const wstring& name, int x, int y)
     f->skinEdgeColor = -1;
     f->skinEdgeAlpha = 70;
     f->skinEdgeWidth = 10;
+    f->pinned = 0;
     f->tileSize = -1;
     f->itemSize = -1;
     f->hwnd = NULL;
