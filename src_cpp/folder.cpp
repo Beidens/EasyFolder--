@@ -1017,6 +1017,8 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         }
 
         // 老数据里的坐标是按小窗口存的 换成现在这个尺寸后会跑到屏幕外 这里按显示器工作区夹一下
+        // 注意夹的是看得见的那块方块 不是整块透明大窗口
+        // 按窗口夹的话贴边放的方块每次开机都被往里推一截 越推越靠中间 重启一次偏一次
         MONITORINFO mi;
         ZeroMemory(&mi, sizeof(mi));
         mi.cbSize = sizeof(mi);
@@ -1028,10 +1030,16 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         RECT a = mi.rcWork;
         int x = w->d->x - w->W / 2;
         int y = w->d->y - w->H / 2;
-        if (x < a.left) x = a.left;
-        if (y < a.top) y = a.top;
-        if (x > a.right - w->W) x = a.right - w->W;
-        if (y > a.bottom - w->H) y = a.bottom - w->H;
+        int xMin = a.left - w->tx;
+        int xMax = a.right - w->tx - w->ts;
+        int yMin = a.top - w->ty;
+        int yMax = a.bottom - w->ty - w->ts;
+        if (xMin > xMax) { xMin = a.left + (a.right - a.left - w->ts) / 2 - w->tx; xMax = xMin; }
+        if (yMin > yMax) { yMin = a.top + (a.bottom - a.top - w->ts) / 2 - w->ty; yMax = yMin; }
+        if (x < xMin) x = xMin;
+        if (y < yMin) y = yMin;
+        if (x > xMax) x = xMax;
+        if (y > yMax) y = yMax;
         w->winX = x;
         w->winY = y;
         w->homeX = x;
