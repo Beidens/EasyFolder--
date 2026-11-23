@@ -222,6 +222,10 @@ static LRESULT CALLBACK MsgProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             else if (LOWORD(lp) == WM_LBUTTONDBLCLK) ShowAll();
         }
         return 0;
+    case WM_ICON_READY:
+        // 后台取好一个图标 展开着的面板补一下 收起的不折腾
+        FolderIconReady();
+        return 0;
     case WM_COPYDATA:
     {
         COPYDATASTRUCT* cds = (COPYDATASTRUCT*)lp;
@@ -300,10 +304,14 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR args, int show)
 
     // 这个窗只是用来接单实例消息 不能做成 message only 不然别的进程 FindWindow 找不到
     g_msgWnd = CreateWindowExW(0, kMsgCls, L"", WS_POPUP, 0, 0, 0, 0, NULL, NULL, inst, NULL);
+    // 图标取好了让这边转一手
+    IconSetNotify(g_msgWnd);
 
     RegisterShell();
     BuildTray();
     ShowAll();
+    // 起来就把图标都排后台取 第一次点开不用现等
+    FolderPreheat();
     FolderCleanTopmost();
 
     if (create) DoCreate(name);

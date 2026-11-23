@@ -5,6 +5,18 @@
 static std::map<wstring, Gdiplus::Bitmap*> g_cache;
 static std::map<wstring, Gdiplus::Bitmap*> g_imgCache;
 
+// 图标要是当场去取 shell 得先解析快捷方式再缩图 一个几十毫秒
+// 展开那一下十几个图标凑在同一帧 动画就卡死了
+// 所以改成后台一个一个取 前台没取到先画个占位 取好再补上
+static CRITICAL_SECTION g_icoLock;
+static bool g_icoLockOn = false;
+static std::vector<std::pair<wstring, int> > g_icoQueue;
+static std::vector<wstring> g_icoWait;
+static HANDLE g_icoEvt = NULL;
+static HANDLE g_icoThread = NULL;
+static HWND g_icoNotify = NULL;
+static volatile LONG g_icoQuit = 0;
+
 // 把 shell 给的 HBITMAP 转成 GDI+ 的预乘位图 顺手处理 alpha 顺序问题
 static Gdiplus::Bitmap* FromHBitmap(HBITMAP hbm)
 {
@@ -117,17 +129,126 @@ static Gdiplus::Bitmap* Load(const wstring& path, int size)
     return bmp;
 }
 
-Gdiplus::Bitmap* IconGet(const wstring& path, int size)
+static wstring IcoKey(const wstring& path, int size)
 {
     wchar_t k[32];
     wsprintfW(k, L"|%d", size);
-    wstring key = path + k;
-    auto it = g_cache.find(key);
-    if (it != g_cache.end()) return it->second;
+    return path + k;
+}
 
-    Gdiplus::Bitmap* bmp = Load(path, size);
-    g_cache[key] = bmp;
-    return bmp;
+static bool IcoQueued(const wstring& key)
+{
+    for (size_t i = 0; i < g_icoWait.size(); i++)
+        if (g_icoWait[i] == key) return true;
+    return false;
+}
+
+static DWORD WINAPI IcoWorker(LPVOID)
+{
+    // shell 那套接口自己会看线程的 COM 状态 这里先给它备一份
+    CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    for (;;)
+    {
+        WaitForSingleObject(g_icoEvt, INFINITE);
+        if (g_icoQuit) break;
+        for (;;)
+        {
+            wstring path;
+            int size = 0;
+            EnterCriticalSection(&g_icoLock);
+            if (g_icoQueue.empty())
+            {
+                LeaveCriticalSection(&g_icoLock);
+                break;
+            }
+            path = g_icoQueue.front().first;
+            size = g_icoQueue.front().second;
+            g_icoQueue.erase(g_icoQueue.begin());
+            LeaveCriticalSection(&g_icoLock);
+
+            Gdiplus::Bitmap* bmp = Load(path, size);
+
+            wstring key = IcoKey(path, size);
+            EnterCriticalSection(&g_icoLock);
+            // 同一个尺寸取过一次就够 后面直接拿缓存
+            if (g_cache.find(key) == g_cache.end()) g_cache[key] = bmp;
+            else delete bmp;
+            for (size_t i = 0; i < g_icoWait.size(); i++)
+                if (g_icoWait[i] == key)
+                {
+                    g_icoWait.erase(g_icoWait.begin() + i);
+                    break;
+                }
+            LeaveCriticalSection(&g_icoLock);
+
+            if (g_icoNotify) PostMessageW(g_icoNotify, WM_ICON_READY, 0, 0);
+        }
+    }
+    CoUninitialize();
+    return 0;
+}
+
+static void IcoInit()
+{
+    if (g_icoLockOn) return;
+    g_icoLockOn = true;
+    InitializeCriticalSection(&g_icoLock);
+    g_icoEvt = CreateEventW(NULL, FALSE, FALSE, NULL);
+    g_icoThread = CreateThread(NULL, 0, IcoWorker, NULL, 0, NULL);
+}
+
+static void IcoEnqueue(const wstring& path, int size)
+{
+    if (!g_icoThread) return;
+    wstring key = IcoKey(path, size);
+    EnterCriticalSection(&g_icoLock);
+    if (g_cache.find(key) == g_cache.end() && !IcoQueued(key))
+    {
+        g_icoWait.push_back(key);
+        g_icoQueue.push_back(std::make_pair(path, size));
+        SetEvent(g_icoEvt);
+    }
+    LeaveCriticalSection(&g_icoLock);
+}
+
+Gdiplus::Bitmap* IconGet(const wstring& path, int size)
+{
+    if (path.empty() || size < 1) return NULL;
+    IcoInit();
+    // 线程起不来就退回当场取 顶多卡一下 总比一直空着好
+    if (!g_icoThread) return Load(path, size);
+
+    wstring key = IcoKey(path, size);
+    EnterCriticalSection(&g_icoLock);
+    auto it = g_cache.find(key);
+    if (it != g_cache.end())
+    {
+        Gdiplus::Bitmap* b = it->second;
+        LeaveCriticalSection(&g_icoLock);
+        return b;
+    }
+    bool dup = IcoQueued(key);
+    if (!dup)
+    {
+        g_icoWait.push_back(key);
+        g_icoQueue.push_back(std::make_pair(path, size));
+        SetEvent(g_icoEvt);
+    }
+    LeaveCriticalSection(&g_icoLock);
+    // 还没取到就不等了 这一帧先画占位
+    return NULL;
+}
+
+void IconPreheat(const wstring& path, int size)
+{
+    if (path.empty() || size < 1) return;
+    IcoInit();
+    IcoEnqueue(path, size);
+}
+
+void IconSetNotify(HWND h)
+{
+    g_icoNotify = h;
 }
 
 // 设置里挑的图片 直接按文件读 不经过 shell 缩略图 免得 png 给回一个图片查看器的图标
@@ -171,8 +292,31 @@ Gdiplus::Bitmap* ImageGet(const wstring& path, int size)
 
 void IconsClear()
 {
-    for (auto& kv : g_cache) delete kv.second;
-    g_cache.clear();
+    // 先把后台线程收掉 不然它还在写缓存的时候这边就清空了
+    if (g_icoThread)
+    {
+        InterlockedExchange(&g_icoQuit, 1);
+        SetEvent(g_icoEvt);
+        WaitForSingleObject(g_icoThread, 5000);
+        CloseHandle(g_icoThread);
+        g_icoThread = NULL;
+    }
+    if (g_icoEvt)
+    {
+        CloseHandle(g_icoEvt);
+        g_icoEvt = NULL;
+    }
+    if (g_icoLockOn)
+    {
+        EnterCriticalSection(&g_icoLock);
+        for (auto& kv : g_cache) delete kv.second;
+        g_cache.clear();
+        g_icoQueue.clear();
+        g_icoWait.clear();
+        LeaveCriticalSection(&g_icoLock);
+        DeleteCriticalSection(&g_icoLock);
+        g_icoLockOn = false;
+    }
     for (auto& kv : g_imgCache) delete kv.second;
     g_imgCache.clear();
 }

@@ -25,6 +25,9 @@ static const int GRID_COLS = 5;
 static const int GRID_ROWS = 3;
 static const int CELL_DIP = 118;
 
+// 后台把图标取好了 通知面板重画一次
+static const UINT WM_ICON_READY = WM_APP + 12;
+
 struct FolderEntry
 {
     wstring path;
@@ -95,6 +98,10 @@ bool StoreAddItem(FolderData* f, const wstring& path);
 void StoreRemoveItem(FolderData* f, int index);
 
 Gdiplus::Bitmap* IconGet(const wstring& path, int size);
+// 提前把图标排进后台队列 打开的时候就不用现等
+void IconPreheat(const wstring& path, int size);
+// 取好了往哪个窗口报一声
+void IconSetNotify(HWND h);
 Gdiplus::Bitmap* ImageGet(const wstring& path, int size);
 void IconsClear();
 void LaunchPath(const wstring& path);
@@ -104,6 +111,10 @@ bool NameInput(HWND owner, const wstring& title, const wstring& initial, wstring
 void FolderShow(FolderData* d);
 void FolderDestroy(FolderData* d);
 void FolderReloadItems(FolderData* d);
+// 启动之后先把所有图标丢后台慢慢取
+void FolderPreheat();
+// 有图标取好了 展开着的面板补一下
+void FolderIconReady();
 void FolderCleanTopmost();
 void FolderApplyLook(FolderData* d);
 void AppCreateFolder();

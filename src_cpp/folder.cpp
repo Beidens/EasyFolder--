@@ -105,6 +105,59 @@ static void ClampScroll(FWin* w)
     if (w->scroll < 0) w->scroll = 0;
 }
 
+// 算这一格该落在哪 就取离得最近的那个格子 超出边界的压回边上那格
+static void SnapCell(FWin* w, int idx, int& tx, int& ty)
+{
+    int cell = CellDip(w->d);
+    int maxRow = MaxItemY(w) / cell;
+    const FolderEntry& it = w->d->items[idx];
+    int gx = (it.x + cell / 2) / cell;
+    int gy = (it.y + cell / 2) / cell;
+    if (gx < 0) gx = 0;
+    if (gx > GRID_COLS - 1) gx = GRID_COLS - 1;
+    if (gy < 0) gy = 0;
+    if (gy > maxRow) gy = maxRow;
+    tx = gx * cell;
+    ty = gy * cell;
+}
+
+// 松手之后摆回格子 落点上已经有人就跟他换个位 两个都齐
+static void SnapItem(FWin* w, int idx)
+{
+    vector<FolderEntry>& v = w->d->items;
+    if (idx < 0 || idx >= (int)v.size()) return;
+    int cell = CellDip(w->d);
+    int maxRow = MaxItemY(w) / cell;
+    int ox = v[idx].x;
+    int oy = v[idx].y;
+    int tx, ty;
+    SnapCell(w, idx, tx, ty);
+    if (tx == ox && ty == oy) return;
+
+    // 原来那格拿来安置被顶掉的那个 免得两个叠一块看不见
+    int ogx = (ox + cell / 2) / cell;
+    int ogy = (oy + cell / 2) / cell;
+    if (ogx < 0) ogx = 0;
+    if (ogx > GRID_COLS - 1) ogx = GRID_COLS - 1;
+    if (ogy < 0) ogy = 0;
+    if (ogy > maxRow) ogy = maxRow;
+    int otx = ogx * cell;
+    int oty = ogy * cell;
+
+    for (int i = 0; i < (int)v.size(); i++)
+    {
+        if (i == idx) continue;
+        if (v[i].x == tx && v[i].y == ty)
+        {
+            v[i].x = otx;
+            v[i].y = oty;
+            break;
+        }
+    }
+    v[idx].x = tx;
+    v[idx].y = ty;
+}
+
 static Font* FTitle()
 {
     if (!g_fTitle) g_fTitle = new Font(L"Microsoft YaHei UI", (REAL)Px(16), FontStyleBold, UnitPixel);
@@ -167,6 +220,24 @@ static void RoundPath(GraphicsPath& p, RectF r, float rad)
     p.AddArc(r.X + r.Width - d, r.Y + r.Height - d, d, d, 0, 90);
     p.AddArc(r.X, r.Y + r.Height - d, d, d, 90, 90);
     p.CloseFigure();
+}
+
+// 拖着图标的时候在要落的那格画个虚框 一眼能看出松手会吸到哪
+static void DrawSnapHint(FWin* w, float a)
+{
+    if (w->itemIdx < 0 || w->itemIdx >= (int)w->d->items.size()) return;
+    int tx, ty;
+    SnapCell(w, w->itemIdx, tx, ty);
+    int cw = Px(CellDip(w->d));
+    float x = (float)(w->px + Px(24) + Px(tx));
+    float y = (float)(w->py + Px(50) + Px(24) + Px(ty) - w->scroll);
+
+    Graphics& g = *w->g;
+    Pen pen(Color((BYTE)Af(a, 120), 255, 255, 255), 1.0f);
+    pen.SetDashStyle(DashStyleDash);
+    GraphicsPath hp;
+    RoundPath(hp, RectF(x + 3, y + 3, (REAL)(cw - 6), (REAL)(cw - 6)), (REAL)Px(12));
+    g.DrawPath(&pen, &hp);
 }
 
 static wstring ItemLabel(const wstring& path)
@@ -431,6 +502,7 @@ static void DrawPanel(FWin* w, float a)
         if (i != w->itemIdx) DrawCell(w, i, a);
     // 手上拖着的那个最后画 保证压在最上层
     if (w->itemIdx >= 0 && w->itemIdx < n) DrawCell(w, w->itemIdx, a);
+    if (w->itemIdx >= 0 && w->itemIdx < n && w->itemDrag) DrawSnapHint(w, a);
     g.ResetClip();
 
     DrawBar(w, a);
@@ -1230,7 +1302,13 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             w->itemIdx = -1;
             w->itemDrag = false;
             if (GetCapture() == h) ReleaseCapture();
-            if (moved) StoreSave();
+            if (moved)
+            {
+                // 松手吸到最近的格子里 钉住的时候位置压根没动过 不去碰它
+                if (!w->d->pinned) SnapItem(w, idx);
+                Render(w);
+                StoreSave();
+            }
             else if (idx < (int)w->d->items.size()) LaunchPath(w->d->items[idx].path);
             return 0;
         }
@@ -1402,6 +1480,28 @@ void FolderApplyLook(FolderData* d)
 void FolderReloadItems(FolderData* d)
 {
     if (d->hwnd && IsWindow(d->hwnd)) PostMessageW(d->hwnd, WM_APP + 1, 0, 0);
+}
+
+// 开机就把所有图标排进后台 点开的时候已经是现成的
+void FolderPreheat()
+{
+    for (FolderData* d : g_folders)
+    {
+        int sz = Px(ItemDip(d));
+        for (size_t i = 0; i < d->items.size(); i++)
+            IconPreheat(d->items[i].path, sz);
+    }
+}
+
+// 后台又取好一个 展开着的面板补一帧
+void FolderIconReady()
+{
+    for (FolderData* d : g_folders)
+    {
+        if (!d->hwnd || !IsWindow(d->hwnd)) continue;
+        FWin* w = (FWin*)d->extra;
+        if (w && w->anim > 0.002f) PostMessageW(d->hwnd, WM_APP + 1, 0, 0);
+    }
 }
 
 void FolderCleanTopmost()
